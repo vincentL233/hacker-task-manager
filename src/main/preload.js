@@ -10,7 +10,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // 獲取GPU負載
   getGpuLoad: () => ipcRenderer.invoke('get-gpu-load'),
-  
+
+  // 獲取網路與磁碟資訊
+  getIoStats: () => ipcRenderer.invoke('get-io-stats'),
+
   // 結束處理程序
   killProcess: (pid, signal = 'SIGTERM') => ipcRenderer.invoke('kill-process', { pid, signal }),
   

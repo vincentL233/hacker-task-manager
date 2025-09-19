@@ -16,10 +16,21 @@ const TaskManager = () => {
   const [processes, setProcesses] = useState([]);
   const [cpuLoad, setCpuLoad] = useState(null);
   const [gpuLoad, setGpuLoad] = useState([]);
+  const [selectedGpuIndex, setSelectedGpuIndex] = useState(0);
+  const [gpuHistory, setGpuHistory] = useState([]);
+  const [networkStats, setNetworkStats] = useState([]);
+  const [networkInterfaces, setNetworkInterfaces] = useState([]);
+  const [fsStats, setFsStats] = useState(null);
+  const [diskStats, setDiskStats] = useState(null);
+  const [storageDevices, setStorageDevices] = useState([]);
   const [performanceHistory, setPerformanceHistory] = useState({
     cpu: Array.from({length: 60}, () => 0),
     memory: Array.from({length: 60}, () => 0),
-    gpu: Array.from({length: 60}, () => 0)
+    gpu: Array.from({length: 60}, () => 0),
+    netUp: Array.from({length: 60}, () => 0),
+    netDown: Array.from({length: 60}, () => 0),
+    diskRead: Array.from({length: 60}, () => 0),
+    diskWrite: Array.from({length: 60}, () => 0)
   });
   // 檢測是否在Electron環境中
   useEffect(() => {
@@ -46,10 +57,11 @@ const TaskManager = () => {
 
     try {
       // 並行獲取所有系統信息
-      const [sysInfo, cpuLoadData, gpuLoadData] = await Promise.all([
+      const [sysInfo, cpuLoadData, gpuLoadData, ioStats] = await Promise.all([
         window.electronAPI.getSystemInfo(),
         window.electronAPI.getCpuLoad(),
-        window.electronAPI.getGpuLoad()
+        window.electronAPI.getGpuLoad(),
+        window.electronAPI.getIoStats()
       ]);
 
       if (sysInfo) {
@@ -107,32 +119,85 @@ const TaskManager = () => {
         });
 
         setProcesses(processData);
+
+        if (Array.isArray(sysInfo.fsSize) && sysInfo.fsSize.length > 0) {
+          setStorageDevices(sysInfo.fsSize);
+        }
       }
 
       if (cpuLoadData) {
-        const normalizedOverall = Number.isFinite(cpuLoadData.overall) ? cpuLoadData.overall : 0;
+        const resolveLoadValue = (...values) => values
+          .map(value => (typeof value === 'number' ? value : Number(value)))
+          .find(value => Number.isFinite(value));
+
         const normalizedCores = Array.isArray(cpuLoadData.cores)
           ? cpuLoadData.cores.map(core => {
-              const loadCandidates = [core.load, core.loadCombined, core.currentLoad];
-              const resolvedLoad = loadCandidates
-                .map(value => (typeof value === 'number' ? value : Number(value)))
-                .find(value => Number.isFinite(value)) || 0;
+              const resolvedLoad = resolveLoadValue(
+                core.load,
+                core.loadCombined,
+                core.currentLoad
+              ) || 0;
+              const resolvedUserLoad = resolveLoadValue(
+                core.loadUser,
+                core.user,
+                core.currentLoadUser
+              ) || 0;
+              const resolvedSystemLoad = resolveLoadValue(
+                core.loadSystem,
+                core.system,
+                core.currentLoadSystem
+              ) || 0;
 
               return {
                 ...core,
-                load: resolvedLoad
+                load: resolvedLoad,
+                userLoad: resolvedUserLoad,
+                systemLoad: resolvedSystemLoad
               };
             })
           : [];
 
+        const averageFromCores = (key) => normalizedCores.length
+          ? normalizedCores.reduce((sum, core) => sum + (core[key] || 0), 0) / normalizedCores.length
+          : 0;
+
+        const normalizedOverall = resolveLoadValue(
+          cpuLoadData.overall,
+          cpuLoadData.currentLoad,
+          cpuLoadData.currentload
+        );
+        const normalizedUserTop = resolveLoadValue(
+          cpuLoadData.user,
+          cpuLoadData.currentLoadUser,
+          cpuLoadData.currentload_user
+        );
+        const normalizedSystemTop = resolveLoadValue(
+          cpuLoadData.system,
+          cpuLoadData.currentLoadSystem,
+          cpuLoadData.currentload_system
+        );
+
+        const normalizedOverallFinal = Number.isFinite(normalizedOverall)
+          ? normalizedOverall
+          : averageFromCores('load');
+        const normalizedUserFinal = Number.isFinite(normalizedUserTop)
+          ? normalizedUserTop
+          : averageFromCores('userLoad');
+        const normalizedSystemFinal = Number.isFinite(normalizedSystemTop)
+          ? normalizedSystemTop
+          : averageFromCores('systemLoad');
+
         setCpuLoad({
-          overall: normalizedOverall,
+          overall: normalizedOverallFinal || 0,
+          user: normalizedUserFinal || 0,
+          system: normalizedSystemFinal || 0,
           cores: normalizedCores
         });
         
         // 更新性能歷史
         setPerformanceHistory(prev => ({
-          cpu: [...prev.cpu.slice(1), normalizedOverall],
+          ...prev,
+          cpu: [...prev.cpu.slice(1), normalizedOverallFinal || 0],
           memory: [...prev.memory.slice(1), sysInfo?.memory ? (sysInfo.memory.used / sysInfo.memory.total * 100) : 0],
           gpu: [...prev.gpu.slice(1), gpuLoadData[0]?.utilizationGpu || 0]
         }));
@@ -140,6 +205,66 @@ const TaskManager = () => {
 
       if (gpuLoadData && gpuLoadData.length > 0) {
         setGpuLoad(gpuLoadData);
+        setGpuHistory(prev => {
+          const baseLength = 60;
+          return gpuLoadData.map((gpu, index) => {
+            const history = prev[index] || Array.from({ length: baseLength }, () => 0);
+            const utilization = Number.isFinite(gpu?.utilizationGpu) ? gpu.utilizationGpu : 0;
+            return [...history.slice(1), utilization];
+          });
+        });
+
+        setSelectedGpuIndex(index => {
+          if (index >= gpuLoadData.length) {
+            return 0;
+          }
+          return index;
+        });
+      }
+
+      if (ioStats) {
+        const networkArray = Array.isArray(ioStats.network) ? ioStats.network : [];
+        const ifaceList = Array.isArray(ioStats.networkInterfaces) ? ioStats.networkInterfaces : [];
+        const fsData = ioStats.fsStats || null;
+        const diskData = ioStats.disks || null;
+        const fsSizeData = Array.isArray(ioStats.fsSize) ? ioStats.fsSize : [];
+
+        setNetworkStats(networkArray);
+        setNetworkInterfaces(ifaceList);
+        setFsStats(fsData);
+        setDiskStats(diskData);
+        setStorageDevices(prevDevices => {
+          if (fsSizeData.length > 0) {
+            return fsSizeData;
+          }
+          if (Array.isArray(sysInfo?.fsSize) && sysInfo.fsSize.length > 0) {
+            return sysInfo.fsSize;
+          }
+          return prevDevices;
+        });
+
+        const aggregatedNetwork = networkArray.reduce((acc, iface) => {
+          const rx = Number(iface?.rx_sec) || 0;
+          const tx = Number(iface?.tx_sec) || 0;
+          return {
+            rx: acc.rx + rx,
+            tx: acc.tx + tx
+          };
+        }, { rx: 0, tx: 0 });
+
+        const netDownMbps = aggregatedNetwork.rx / 1024 / 1024;
+        const netUpMbps = aggregatedNetwork.tx / 1024 / 1024;
+
+        const diskReadMB = fsData && Number.isFinite(fsData.rx_sec) ? fsData.rx_sec / 1024 / 1024 : 0;
+        const diskWriteMB = fsData && Number.isFinite(fsData.wx_sec) ? fsData.wx_sec / 1024 / 1024 : 0;
+
+        setPerformanceHistory(prev => ({
+          ...prev,
+          netUp: [...prev.netUp.slice(1), netUpMbps],
+          netDown: [...prev.netDown.slice(1), netDownMbps],
+          diskRead: [...prev.diskRead.slice(1), diskReadMB],
+          diskWrite: [...prev.diskWrite.slice(1), diskWriteMB]
+        }));
       }
 
     } catch (error) {
@@ -240,6 +365,171 @@ const TaskManager = () => {
     return chars[Math.floor(Math.random() * chars.length)];
   };
 
+  const formatThroughput = (mbps) => {
+    if (!Number.isFinite(mbps) || mbps <= 0) return '0.0 MB/s';
+    if (mbps >= 1) return `${mbps.toFixed(1)} MB/s`;
+    return `${(mbps * 1024).toFixed(0)} KB/s`;
+  };
+
+  const formatIops = (value) => {
+    if (!Number.isFinite(value) || value <= 0) return '0 IOPS';
+    if (value >= 1000) return `${(value / 1000).toFixed(1)}k IOPS`;
+    return `${Math.round(value)} IOPS`;
+  };
+
+  const formatStorage = (bytes) => {
+    if (!Number.isFinite(bytes) || bytes <= 0) return '0 GB';
+    const gb = bytes / 1024 / 1024 / 1024;
+    if (gb >= 1024) {
+      return `${(gb / 1024).toFixed(2)} TB`;
+    }
+    return `${gb.toFixed(1)} GB`;
+  };
+
+  const interfaceLabelMap = useMemo(() => {
+    const map = {};
+    networkInterfaces.forEach(iface => {
+      if (!iface) return;
+      const base = iface.ifaceName || iface.iface || iface.type || 'Unknown';
+      const ip = iface.ip4 || iface.ip6;
+      map[iface.iface] = ip ? `${base} (${ip})` : base;
+    });
+    return map;
+  }, [networkInterfaces]);
+
+  const networkSummary = useMemo(() => {
+    if (!Array.isArray(networkStats) || networkStats.length === 0) {
+      return { up: 0, down: 0, top: [] };
+    }
+
+    const candidates = networkStats.map(iface => {
+      const up = Number(iface?.tx_sec) / 1024 / 1024 || 0;
+      const down = Number(iface?.rx_sec) / 1024 / 1024 || 0;
+      const total = up + down;
+      return {
+        name: interfaceLabelMap[iface.iface] || iface.iface || 'Unknown',
+        up,
+        down,
+        total
+      };
+    });
+
+    const totals = candidates.reduce((acc, item) => ({
+      up: acc.up + item.up,
+      down: acc.down + item.down
+    }), { up: 0, down: 0 });
+
+    const top = candidates
+      .filter(item => item.total > 0.001)
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 4);
+
+    return {
+      up: totals.up,
+      down: totals.down,
+      top
+    };
+  }, [networkStats, interfaceLabelMap]);
+
+  const diskSummary = useMemo(() => {
+    const fsReadSec = fsStats ? Number(fsStats.rx_sec) : NaN;
+    const fsWriteSec = fsStats ? Number(fsStats.wx_sec) : NaN;
+
+    const aggregatedDiskStats = Array.isArray(diskStats)
+      ? diskStats.reduce((acc, item) => ({
+          rIO_sec: acc.rIO_sec + (Number(item?.rIO_sec) || 0),
+          wIO_sec: acc.wIO_sec + (Number(item?.wIO_sec) || 0)
+        }), { rIO_sec: 0, wIO_sec: 0 })
+      : diskStats || { rIO_sec: 0, wIO_sec: 0 };
+
+    const diskReadIopsValue = Number(aggregatedDiskStats.rIO_sec);
+    const diskWriteIopsValue = Number(aggregatedDiskStats.wIO_sec);
+
+    const readMB = Number.isFinite(fsReadSec) ? fsReadSec / 1024 / 1024 : 0;
+    const writeMB = Number.isFinite(fsWriteSec) ? fsWriteSec / 1024 / 1024 : 0;
+    const readIops = Number.isFinite(diskReadIopsValue) ? diskReadIopsValue : 0;
+    const writeIops = Number.isFinite(diskWriteIopsValue) ? diskWriteIopsValue : 0;
+
+    return {
+      readMB,
+      writeMB,
+      readIops,
+      writeIops
+    };
+  }, [fsStats, diskStats]);
+
+  const storageSummary = useMemo(() => {
+    if (!Array.isArray(storageDevices) || storageDevices.length === 0) {
+      return [];
+    }
+
+    const visibleVolumes = ['/', '/System/Volumes/Data'];
+
+    const deduped = new Map();
+
+    storageDevices.forEach(device => {
+      if (!device) return;
+
+      const mount = device.mount || device.fs || '';
+      if (!mount) return;
+
+      const isVisible =
+        visibleVolumes.includes(mount) ||
+        mount.startsWith('/Volumes') ||
+        mount === '/System/Volumes/Data';
+
+      if (!isVisible) {
+        return;
+      }
+
+      const key = mount.toLowerCase();
+      const current = deduped.get(key);
+
+      if (!current || (Number(device.size) || 0) > (Number(current.size) || 0)) {
+        deduped.set(key, device);
+      }
+    });
+
+    const namingOverrides = (mountPath, device) => {
+      if (mountPath === '/') return 'System Root (/)';
+      if (mountPath === '/System/Volumes/Data') return 'System Data';
+      if (mountPath.startsWith('/Volumes/')) {
+        return mountPath.replace('/Volumes/', '');
+      }
+      return device.label || device.fs || mountPath || 'Unknown';
+    };
+
+    return Array.from(deduped.values())
+      .map(device => {
+        const sizeBytes = Number(device?.size) || 0;
+        const usedBytes = Number(device?.used) || 0;
+        const availableBytes = Number(device?.available) || (sizeBytes - usedBytes);
+        const usagePercent = sizeBytes > 0 ? (usedBytes / sizeBytes) * 100 : 0;
+        const mount = device.mount || device.fs || 'Unknown';
+
+        return {
+          name: namingOverrides(mount, device),
+          mount,
+          sizeBytes,
+          usedBytes,
+          availableBytes,
+          usagePercent: Number.isFinite(usagePercent) ? usagePercent : 0
+        };
+      })
+      .sort((a, b) => b.sizeBytes - a.sizeBytes);
+  }, [storageDevices]);
+
+  const netDownMax = Math.max(...performanceHistory.netDown, 0.001);
+  const netUpMax = Math.max(...performanceHistory.netUp, 0.001);
+  const diskReadMax = Math.max(...performanceHistory.diskRead, 0.001);
+  const diskWriteMax = Math.max(...performanceHistory.diskWrite, 0.001);
+  const activeGpu = gpuLoad[selectedGpuIndex] || gpuLoad[0] || null;
+  const activeGpuHistory = gpuHistory[selectedGpuIndex] || gpuHistory[0] || Array.from({ length: 60 }, () => 0);
+  const gpuHistoryMax = Math.max(...activeGpuHistory, 1);
+  const gpuMemoryUsed = Number.isFinite(activeGpu?.memoryUsed) ? activeGpu.memoryUsed : 0;
+  const gpuMemoryTotal = Number.isFinite(activeGpu?.memoryTotal) ? activeGpu.memoryTotal : 0;
+  const gpuMemoryUsage = gpuMemoryTotal > 0 ? (gpuMemoryUsed / gpuMemoryTotal) * 100 : 0;
+
   const selectedProcess = useMemo(() => {
     if (!selectedPid) return null;
     return processes.find(proc => proc.pid === selectedPid) || null;
@@ -298,13 +588,25 @@ const TaskManager = () => {
     threads: processes.reduce((sum, p) => sum + (p.threads || 0), 0),
     handles: processes.reduce((sum, p) => sum + (p.handles || 0), 0),
     uptime: formatUptime(systemInfo?.time?.uptime),
-    cpuSpeed: systemInfo?.cpu?.speed ? `${(systemInfo.cpu.speed / 1000).toFixed(1)} GHz` : '3.2 GHz',
+    cpuUser: cpuLoad?.user || 0,
+    cpuSystem: cpuLoad?.system || 0,
     cpuTemp: Math.round(systemInfo?.temperature?.main || 45),
     cpuPower: (cpuLoad?.overall || 0) / 100 * 15 + 5,
-    gpuUsage: gpuLoad[0]?.utilizationGpu || 0,
-    gpuMemory: gpuLoad[0]?.memoryUsed || 0,
-    gpuTemp: Math.round(gpuLoad[0]?.temperatureGpu || 40),
-    gpuPower: (gpuLoad[0]?.utilizationGpu || 0) / 100 * 25 + 8,
+    gpuUsage: Number.isFinite(activeGpu?.utilizationGpu) ? activeGpu.utilizationGpu : 0,
+    gpuMemory: Number.isFinite(activeGpu?.memoryUsed) ? activeGpu.memoryUsed : 0,
+    gpuMemoryTotal: Number.isFinite(activeGpu?.memoryTotal) ? activeGpu.memoryTotal : 0,
+    gpuTemp: Math.round(activeGpu?.temperatureGpu || 40),
+    gpuPower: (Number.isFinite(activeGpu?.utilizationGpu) ? activeGpu.utilizationGpu : 0) / 100 * 25 + 8,
+    gpuCount: gpuLoad.length,
+    gpuModel: activeGpu?.model || 'INTEGRATED',
+    networkUp: networkSummary.up,
+    networkDown: networkSummary.down,
+    networkTop: networkSummary.top,
+    diskRead: diskSummary.readMB,
+    diskWrite: diskSummary.writeMB,
+    diskReadIops: diskSummary.readIops,
+    diskWriteIops: diskSummary.writeIops,
+    storageVolumes: storageSummary,
     totalPower: 0,
     batteryLevel: systemInfo?.battery?.percent || 100
   };
@@ -348,7 +650,7 @@ const TaskManager = () => {
                 <div className="grid grid-cols-2 gap-2 md:gap-4 text-xs">
                   <div>USAGE: <span className="text-green-300 font-bold">{systemStats.totalCpu.toFixed(1)}%</span></div>
                   <div>POWER: <span className="text-green-300 font-bold">{systemStats.cpuPower.toFixed(1)}W</span></div>
-                  <div>FREQ: <span className="text-green-300 font-bold">{systemStats.cpuSpeed}</span></div>
+                  <div>USER/SYS: <span className="text-green-300 font-bold">{systemStats.cpuUser.toFixed(1)}% / {systemStats.cpuSystem.toFixed(1)}%</span></div>
                   <div>TEMP: <span className="text-green-300 font-bold">{systemStats.cpuTemp}°C</span></div>
                   <div>CORES: <span className="text-green-300 font-bold">{systemInfo?.cpu?.cores || 'N/A'}</span></div>
                   <div>THREADS: <span className="text-green-300 font-bold">{systemInfo?.cpu?.processors || 'N/A'}</span></div>
@@ -381,16 +683,128 @@ const TaskManager = () => {
             </div>
             {/* GPU 資訊 */}
             <div className="space-y-4 border border-green-500/30 p-3 md:p-4 rounded bg-gray-900/50">
-              <h3 className="text-base md:text-lg font-bold text-green-400 flex items-center space-x-2">
-                <Activity className="w-4 h-4 md:w-5 md:h-5 animate-pulse" />
-                <span className="text-sm md:text-base">[GPU] {gpuLoad[0]?.model || 'INTEGRATED'}</span>
-              </h3>
+              <div className="flex items-center justify-between">
+                <h3 className="text-base md:text-lg font-bold text-green-400 flex items-center space-x-2">
+                  <Activity className="w-4 h-4 md:w-5 md:h-5 animate-pulse" />
+                  <span className="text-sm md:text-base">[GPU] {systemStats.gpuModel}</span>
+                </h3>
+                {systemStats.gpuCount > 1 && (
+                  <div className="flex space-x-1 text-[10px] md:text-xs">
+                    {gpuLoad.map((gpu, index) => (
+                      <button
+                        key={index}
+                        onClick={() => setSelectedGpuIndex(index)}
+                        className={`px-2 py-1 border rounded transition-colors ${index === selectedGpuIndex ? 'bg-green-500/30 border-green-400 text-green-200' : 'border-green-500/40 text-green-300 hover:bg-green-500/10'}`}
+                      >
+                        GPU_{index}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <div className="bg-black/50 p-2 md:p-3 rounded border border-green-500/20">
                 <div className="grid grid-cols-2 gap-2 md:gap-4 text-xs">
                   <div>USAGE: <span className="text-green-300 font-bold">{systemStats.gpuUsage.toFixed(1)}%</span></div>
                   <div>POWER: <span className="text-green-300 font-bold">{systemStats.gpuPower.toFixed(1)}W</span></div>
-                  <div>VMEM: <span className="text-green-300 font-bold">{formatMemory(systemStats.gpuMemory)}</span></div>
+                  <div>MEM: <span className="text-green-300 font-bold">{formatMemory(systemStats.gpuMemory)}{systemStats.gpuMemoryTotal > 0 ? ` / ${formatMemory(systemStats.gpuMemoryTotal)}` : ''}</span></div>
                   <div>TEMP: <span className="text-green-300 font-bold">{systemStats.gpuTemp}°C</span></div>
+                </div>
+                {systemStats.gpuMemoryTotal > 0 && (
+                  <div className="mt-3">
+                    <div className="h-2 md:h-3 bg-gray-800 rounded-sm overflow-hidden border border-green-500/30">
+                      <div
+                        className="h-full bg-green-400 transition-all duration-300"
+                        style={{ width: `${Math.min(gpuMemoryUsage, 100)}%` }}
+                      ></div>
+                    </div>
+                    <div className="text-[10px] text-green-300 mt-1 text-right">
+                      VRAM: {gpuMemoryUsage.toFixed(1)}%
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <h4 className="font-bold mb-2 md:mb-3 text-green-400 text-xs md:text-sm">[GPU_HISTORY]</h4>
+                <div className="h-6 md:h-8 bg-gray-800 rounded-sm flex items-end space-x-0.5 px-1 border border-green-500/30">
+                  {activeGpuHistory.slice(isMobile ? -20 : -30).map((value, index) => (
+                    <div
+                      key={index}
+                      className="flex-1 bg-green-400 rounded-sm min-h-0.5"
+                      style={{ height: `${Math.min((value / gpuHistoryMax) * 100, 100)}%` }}
+                    ></div>
+                  ))}
+                </div>
+                <div className="text-[10px] text-green-300 mt-1">
+                  最近負載趨勢（取樣 {isMobile ? 20 : 30} 次）
+                </div>
+              </div>
+
+              {(!activeGpu || !Number.isFinite(activeGpu.utilizationGpu)) && (
+                <p className="text-[10px] text-green-300/80">
+                  * GPU 利用率由系統回報。若無法取得，將顯示推估或保持 0。
+                </p>
+              )}
+            </div>
+
+            {/* 網路資訊 */}
+            <div className="space-y-4 border border-green-500/30 p-3 md:p-4 rounded bg-gray-900/50">
+              <h3 className="text-base md:text-lg font-bold text-green-400 flex items-center space-x-2">
+                <span className="text-sm md:text-base">[NETWORK] THROUGHPUT</span>
+              </h3>
+              <div className="bg-black/50 p-2 md:p-3 rounded border border-green-500/20">
+                <div className="grid grid-cols-2 gap-2 md:gap-4 text-xs">
+                  <div>DOWN: <span className="text-green-300 font-bold">{formatThroughput(systemStats.networkDown)}</span></div>
+                  <div>UP: <span className="text-green-300 font-bold">{formatThroughput(systemStats.networkUp)}</span></div>
+                  <div>INTERFACES: <span className="text-green-300 font-bold">{networkStats.length}</span></div>
+                  <div>TOP: <span className="text-green-300 font-bold">{systemStats.networkTop[0]?.name || 'N/A'}</span></div>
+                </div>
+              </div>
+
+              <div>
+                <h4 className="font-bold mb-2 md:mb-3 text-green-400 text-xs md:text-sm">[THROUGHPUT_HISTORY]</h4>
+                <div className="space-y-2">
+                  <div>
+                    <div className="text-xs text-green-300 mb-1">DOWN</div>
+                    <div className="h-6 md:h-8 bg-gray-800 rounded-sm flex items-end space-x-0.5 px-1 border border-green-500/30">
+                      {performanceHistory.netDown.slice(isMobile ? -20 : -30).map((value, index) => (
+                        <div
+                          key={index}
+                          className="flex-1 bg-blue-400 rounded-sm min-h-0.5"
+                          style={{height: `${Math.min((value / netDownMax) * 100, 100)}%`}}
+                        ></div>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-green-300 mb-1">UP</div>
+                    <div className="h-6 md:h-8 bg-gray-800 rounded-sm flex items-end space-x-0.5 px-1 border border-green-500/30">
+                      {performanceHistory.netUp.slice(isMobile ? -20 : -30).map((value, index) => (
+                        <div
+                          key={index}
+                          className="flex-1 bg-purple-400 rounded-sm min-h-0.5"
+                          style={{height: `${Math.min((value / netUpMax) * 100, 100)}%`}}
+                        ></div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <h4 className="font-bold mb-2 md:mb-3 text-green-400 text-xs md:text-sm">[TOP_INTERFACES]</h4>
+                <div className="space-y-1 text-xs">
+                  {systemStats.networkTop.length > 0 ? (
+                    systemStats.networkTop.map((iface, index) => (
+                      <div key={index} className="flex justify-between items-center bg-gray-900/60 border border-green-500/20 rounded px-2 py-1">
+                        <span className="text-green-200 truncate pr-2">{iface.name}</span>
+                        <span className="text-green-300 font-mono">{formatThroughput(iface.down)} / {formatThroughput(iface.up)}</span>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-green-300">No active interfaces</div>
+                  )}
                 </div>
               </div>
             </div>
@@ -483,6 +897,83 @@ const TaskManager = () => {
                   </div>
                 </div>
               </div>
+            </div>
+
+            {/* 磁碟資訊 */}
+            <div className="space-y-4 border border-green-500/30 p-3 md:p-4 rounded bg-gray-900/50 lg:col-span-2">
+              <h3 className="text-base md:text-lg font-bold text-green-400 flex items-center space-x-2">
+                <span className="text-sm md:text-base">[STORAGE] PERFORMANCE</span>
+              </h3>
+              <div className="bg-black/50 p-2 md:p-3 rounded border border-green-500/20">
+                <div className="grid grid-cols-2 gap-2 md:gap-4 text-xs">
+                  <div>READ: <span className="text-green-300 font-bold">{formatThroughput(systemStats.diskRead)}</span></div>
+                  <div>WRITE: <span className="text-green-300 font-bold">{formatThroughput(systemStats.diskWrite)}</span></div>
+                  <div>READ IOPS: <span className="text-green-300 font-bold">{formatIops(systemStats.diskReadIops)}</span></div>
+                  <div>WRITE IOPS: <span className="text-green-300 font-bold">{formatIops(systemStats.diskWriteIops)}</span></div>
+                </div>
+              </div>
+
+              <div>
+                <h4 className="font-bold mb-2 md:mb-3 text-green-400 text-xs md:text-sm">[DISK_HISTORY]</h4>
+                <div className="space-y-2">
+                  <div>
+                    <div className="text-xs text-green-300 mb-1">READ</div>
+                    <div className="h-6 md:h-8 bg-gray-800 rounded-sm flex items-end space-x-0.5 px-1 border border-green-500/30">
+                      {performanceHistory.diskRead.slice(isMobile ? -20 : -30).map((value, index) => (
+                        <div
+                          key={index}
+                          className="flex-1 bg-teal-400 rounded-sm min-h-0.5"
+                          style={{height: `${Math.min((value / diskReadMax) * 100, 100)}%`}}
+                        ></div>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-green-300 mb-1">WRITE</div>
+                    <div className="h-6 md:h-8 bg-gray-800 rounded-sm flex items-end space-x-0.5 px-1 border border-green-500/30">
+                      {performanceHistory.diskWrite.slice(isMobile ? -20 : -30).map((value, index) => (
+                        <div
+                          key={index}
+                          className="flex-1 bg-amber-400 rounded-sm min-h-0.5"
+                          style={{height: `${Math.min((value / diskWriteMax) * 100, 100)}%`}}
+                        ></div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <h4 className="font-bold mb-2 md:mb-3 text-green-400 text-xs md:text-sm">[VOLUME_USAGE]</h4>
+                <div className="space-y-1 text-xs">
+                  {systemStats.storageVolumes.length > 0 ? (
+                    systemStats.storageVolumes.slice(0, 5).map((volume, index) => (
+                      <div key={index} className="bg-gray-900/60 border border-green-500/20 rounded px-2 py-2">
+                        <div className="flex justify-between text-green-200">
+                          <span className="truncate pr-2">{volume.name}</span>
+                          <span className="font-mono">{volume.usagePercent.toFixed(1)}%</span>
+                        </div>
+                        <div className="h-2 bg-gray-800 rounded-sm overflow-hidden border border-green-500/30 mt-1">
+                          <div
+                            className="h-full bg-green-400"
+                            style={{width: `${Math.min(volume.usagePercent, 100)}%`}}
+                          ></div>
+                        </div>
+                        <div className="flex justify-between text-[10px] text-green-300 mt-1 font-mono">
+                          <span>USED: {formatStorage(volume.usedBytes)}</span>
+                          <span>FREE: {formatStorage(volume.availableBytes)}</span>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-green-300">No volume information</div>
+                  )}
+                </div>
+              </div>
+
+              <p className="text-[10px] text-green-300/80">
+                * 數據為系統層級總計，部分平台可能無法取得外接磁碟 I/O，僅顯示已知容量資訊。
+              </p>
             </div>
           </div>
         </div>

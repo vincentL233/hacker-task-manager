@@ -52,14 +52,15 @@ app.on('activate', () => {
 // 系統信息IPC處理器
 ipcMain.handle('get-system-info', async () => {
   try {
-    const [cpu, mem, processes, graphics, battery, temp, time] = await Promise.all([
+    const [cpu, mem, processes, graphics, battery, temp, time, fsSize] = await Promise.all([
       si.cpu(),
       si.mem(),
       si.processes(),
       si.graphics(),
       si.battery(),
       si.cpuTemperature(),
-      si.time()
+      si.time(),
+      si.fsSize()
     ]);
 
     return {
@@ -69,7 +70,8 @@ ipcMain.handle('get-system-info', async () => {
       graphics,
       battery,
       temperature: temp,
-      time
+      time,
+      fsSize
     };
   } catch (error) {
     console.error('Error fetching system info:', error);
@@ -111,6 +113,30 @@ ipcMain.handle('get-gpu-load', async () => {
   } catch (error) {
     console.error('Error fetching GPU load:', error);
     return [];
+  }
+});
+
+// 網路與磁碟資訊
+ipcMain.handle('get-io-stats', async () => {
+  try {
+    const [network, networkInterfaces, fsStats, disks, fsSize] = await Promise.all([
+      si.networkStats(),
+      si.networkInterfaces(),
+      si.fsStats(),
+      si.disksIO(),
+      si.fsSize()
+    ]);
+
+    return {
+      network,
+      networkInterfaces,
+      fsStats,
+      disks,
+      fsSize
+    };
+  } catch (error) {
+    console.error('Error fetching IO stats:', error);
+    return null;
   }
 });
 
