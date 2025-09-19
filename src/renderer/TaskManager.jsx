@@ -1,5 +1,41 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, X, Terminal, Zap, Activity, AlertTriangle } from 'lucide-react';
+import { Search, X, Terminal, Zap, Activity, AlertTriangle, Settings } from 'lucide-react';
+
+const SETTINGS_STORAGE_KEY = 'htm-settings';
+const MIN_UPDATE_INTERVAL = 500;
+const MIN_HISTORY_LENGTH = 10;
+const MAX_HISTORY_LENGTH = 360;
+const defaultSettings = {
+  updateInterval: 2000,
+  historyLength: 60,
+  defaultPerformanceTab: 'cpu',
+  enabledCards: {
+    cpu: true,
+    gpu: true,
+    network: true,
+    storage: true
+  }
+};
+
+const createHistoryArray = (length) => Array.from({ length }, () => 0);
+
+const adjustHistoryArray = (array, length) => {
+  const safeArray = Array.isArray(array) ? [...array] : [];
+  if (safeArray.length > length) {
+    return safeArray.slice(safeArray.length - length);
+  }
+  if (safeArray.length < length) {
+    return Array.from({ length: length - safeArray.length }, () => 0).concat(safeArray);
+  }
+  return safeArray;
+};
+
+const PERFORMANCE_TABS = [
+  { id: 'cpu', label: 'CPU' },
+  { id: 'gpu', label: 'GPU', requireGpu: true },
+  { id: 'network', label: 'Network' },
+  { id: 'storage', label: 'Storage' }
+];
 
 const TaskManager = () => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -10,6 +46,10 @@ const TaskManager = () => {
   const [isMobile, setIsMobile] = useState(false);
   const [isElectron, setIsElectron] = useState(false);
   const [selectedPid, setSelectedPid] = useState(null);
+  const [settings, setSettings] = useState(defaultSettings);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [pendingSettings, setPendingSettings] = useState(defaultSettings);
   
   // 系統數據狀態
   const [systemInfo, setSystemInfo] = useState(null);
@@ -18,21 +58,49 @@ const TaskManager = () => {
   const [gpuLoad, setGpuLoad] = useState([]);
   const [selectedGpuIndex, setSelectedGpuIndex] = useState(0);
   const [gpuHistory, setGpuHistory] = useState([]);
-  const [performanceTab, setPerformanceTab] = useState('cpu');
+  const [performanceTab, setPerformanceTab] = useState(defaultSettings.defaultPerformanceTab);
   const [networkStats, setNetworkStats] = useState([]);
   const [networkInterfaces, setNetworkInterfaces] = useState([]);
   const [fsStats, setFsStats] = useState(null);
   const [diskStats, setDiskStats] = useState(null);
   const [storageDevices, setStorageDevices] = useState([]);
-  const [performanceHistory, setPerformanceHistory] = useState({
-    cpu: Array.from({length: 60}, () => 0),
-    memory: Array.from({length: 60}, () => 0),
-    gpu: Array.from({length: 60}, () => 0),
-    netUp: Array.from({length: 60}, () => 0),
-    netDown: Array.from({length: 60}, () => 0),
-    diskRead: Array.from({length: 60}, () => 0),
-    diskWrite: Array.from({length: 60}, () => 0)
+
+  const historyLength = Math.min(
+    MAX_HISTORY_LENGTH,
+    Math.max(MIN_HISTORY_LENGTH, settings.historyLength || defaultSettings.historyLength)
+  );
+  const updateInterval = Math.max(MIN_UPDATE_INTERVAL, settings.updateInterval || defaultSettings.updateInterval);
+
+  const appendHistory = (prevArray, value) => {
+    const baseArray = Array.isArray(prevArray) ? [...prevArray, value] : [value];
+    if (baseArray.length > historyLength) {
+      baseArray.splice(0, baseArray.length - historyLength);
+    }
+    if (baseArray.length < historyLength) {
+      return Array.from({ length: historyLength - baseArray.length }, () => 0).concat(baseArray);
+    }
+    return baseArray;
+  };
+
+  const tabsForRender = PERFORMANCE_TABS.map(tab => {
+    const enabled = settings.enabledCards?.[tab.id] !== false;
+    const dataAvailable = !(tab.requireGpu && gpuLoad.length === 0);
+    return {
+      ...tab,
+      disabled: !enabled || !dataAvailable
+    };
   });
+
+  const availableTabs = tabsForRender.filter(tab => !tab.disabled);
+  const [performanceHistory, setPerformanceHistory] = useState(() => ({
+    cpu: createHistoryArray(defaultSettings.historyLength),
+    memory: createHistoryArray(defaultSettings.historyLength),
+    gpu: createHistoryArray(defaultSettings.historyLength),
+    netUp: createHistoryArray(defaultSettings.historyLength),
+    netDown: createHistoryArray(defaultSettings.historyLength),
+    diskRead: createHistoryArray(defaultSettings.historyLength),
+    diskWrite: createHistoryArray(defaultSettings.historyLength)
+  }));
   // 檢測是否在Electron環境中
   useEffect(() => {
     setIsElectron(typeof window !== 'undefined' && window.electronAPI);
@@ -50,10 +118,70 @@ const TaskManager = () => {
   }, []);
 
   useEffect(() => {
-    if (performanceTab === 'gpu' && gpuLoad.length === 0) {
-      setPerformanceTab('cpu');
+    if (typeof window === 'undefined') {
+      setSettingsLoaded(true);
+      return;
     }
-  }, [performanceTab, gpuLoad.length]);
+
+    try {
+      const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const mergedSettings = {
+          ...defaultSettings,
+          ...parsed,
+          enabledCards: {
+            ...defaultSettings.enabledCards,
+            ...(parsed?.enabledCards || {})
+          }
+        };
+        mergedSettings.enabledCards.cpu = true;
+        mergedSettings.updateInterval = Number(mergedSettings.updateInterval) || defaultSettings.updateInterval;
+        mergedSettings.historyLength = Number(mergedSettings.historyLength) || defaultSettings.historyLength;
+        setSettings(mergedSettings);
+        if (mergedSettings.defaultPerformanceTab) {
+          setPerformanceTab(mergedSettings.defaultPerformanceTab);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load settings:', error);
+    } finally {
+      setSettingsLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!settingsLoaded || typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+    } catch (error) {
+      console.error('Failed to save settings:', error);
+    }
+  }, [settings, settingsLoaded]);
+
+  useEffect(() => {
+    if (availableTabs.length === 0) {
+      setPerformanceTab('cpu');
+      return;
+    }
+    if (!availableTabs.some(tab => tab.id === performanceTab)) {
+      setPerformanceTab(availableTabs[0].id);
+    }
+  }, [availableTabs, performanceTab]);
+
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    setPerformanceHistory(prev => ({
+      cpu: adjustHistoryArray(prev.cpu, historyLength),
+      memory: adjustHistoryArray(prev.memory, historyLength),
+      gpu: adjustHistoryArray(prev.gpu, historyLength),
+      netUp: adjustHistoryArray(prev.netUp, historyLength),
+      netDown: adjustHistoryArray(prev.netDown, historyLength),
+      diskRead: adjustHistoryArray(prev.diskRead, historyLength),
+      diskWrite: adjustHistoryArray(prev.diskWrite, historyLength)
+    }));
+    setGpuHistory(prev => prev.map(history => adjustHistoryArray(history, historyLength)));
+  }, [historyLength, settingsLoaded]);
 
   // 獲取真實系統數據
   const fetchSystemData = async () => {
@@ -202,22 +330,25 @@ const TaskManager = () => {
         });
         
         // 更新性能歷史
+        const primaryGpuUsage = gpuLoadData && gpuLoadData[0]
+          ? Number.isFinite(gpuLoadData[0].utilizationGpu) ? gpuLoadData[0].utilizationGpu : 0
+          : 0;
+
         setPerformanceHistory(prev => ({
           ...prev,
-          cpu: [...prev.cpu.slice(1), normalizedOverallFinal || 0],
-          memory: [...prev.memory.slice(1), sysInfo?.memory ? (sysInfo.memory.used / sysInfo.memory.total * 100) : 0],
-          gpu: [...prev.gpu.slice(1), gpuLoadData[0]?.utilizationGpu || 0]
+          cpu: appendHistory(prev.cpu, normalizedOverallFinal || 0),
+          memory: appendHistory(prev.memory, sysInfo?.memory ? (sysInfo.memory.used / sysInfo.memory.total * 100) : 0),
+          gpu: appendHistory(prev.gpu, primaryGpuUsage)
         }));
       }
 
       if (gpuLoadData && gpuLoadData.length > 0) {
         setGpuLoad(gpuLoadData);
         setGpuHistory(prev => {
-          const baseLength = 60;
           return gpuLoadData.map((gpu, index) => {
-            const history = prev[index] || Array.from({ length: baseLength }, () => 0);
             const utilization = Number.isFinite(gpu?.utilizationGpu) ? gpu.utilizationGpu : 0;
-            return [...history.slice(1), utilization];
+            const history = prev[index] || createHistoryArray(historyLength);
+            return appendHistory(history, utilization);
           });
         });
 
@@ -267,10 +398,10 @@ const TaskManager = () => {
 
         setPerformanceHistory(prev => ({
           ...prev,
-          netUp: [...prev.netUp.slice(1), netUpMbps],
-          netDown: [...prev.netDown.slice(1), netDownMbps],
-          diskRead: [...prev.diskRead.slice(1), diskReadMB],
-          diskWrite: [...prev.diskWrite.slice(1), diskWriteMB]
+          netUp: appendHistory(prev.netUp, netUpMbps),
+          netDown: appendHistory(prev.netDown, netDownMbps),
+          diskRead: appendHistory(prev.diskRead, diskReadMB),
+          diskWrite: appendHistory(prev.diskWrite, diskWriteMB)
         }));
       }
 
@@ -281,16 +412,27 @@ const TaskManager = () => {
 
   // 定時更新數據
   useEffect(() => {
-    const interval = setInterval(() => {
+    if (!isElectron) {
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    const runFetch = () => {
+      if (cancelled) return;
       fetchSystemData();
       setCurrentTime(new Date());
-    }, 2000); // 每2秒更新一次
+    };
 
-    // 立即獲取一次數據
-    fetchSystemData();
+    runFetch();
 
-    return () => clearInterval(interval);
-  }, [isElectron]);
+    const interval = setInterval(runFetch, updateInterval); // 依設定更新
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [isElectron, updateInterval, historyLength]);
 
   // 結束處理程序
   const handleKillProcess = async (pid, signal = 'SIGTERM') => {
@@ -531,18 +673,12 @@ const TaskManager = () => {
   const diskReadMax = Math.max(...performanceHistory.diskRead, 0.001);
   const diskWriteMax = Math.max(...performanceHistory.diskWrite, 0.001);
   const activeGpu = gpuLoad[selectedGpuIndex] || gpuLoad[0] || null;
-  const activeGpuHistory = gpuHistory[selectedGpuIndex] || gpuHistory[0] || Array.from({ length: 60 }, () => 0);
+  const activeGpuHistory = gpuHistory[selectedGpuIndex] || gpuHistory[0] || createHistoryArray(historyLength);
   const gpuHistoryMax = Math.max(...activeGpuHistory, 1);
   const gpuMemoryUsed = Number.isFinite(activeGpu?.memoryUsed) ? activeGpu.memoryUsed : 0;
   const gpuMemoryTotal = Number.isFinite(activeGpu?.memoryTotal) ? activeGpu.memoryTotal : 0;
   const gpuMemoryUsage = gpuMemoryTotal > 0 ? (gpuMemoryUsed / gpuMemoryTotal) * 100 : 0;
-
-  const performanceTabs = [
-    { id: 'cpu', label: 'CPU' },
-    { id: 'gpu', label: 'GPU', disabled: gpuLoad.length === 0 },
-    { id: 'network', label: 'Network' },
-    { id: 'storage', label: 'Storage' }
-  ];
+  const performanceTabs = tabsForRender;
 
   const renderPerformanceCard = () => {
     switch (performanceTab) {
@@ -881,6 +1017,197 @@ const TaskManager = () => {
     }
   };
 
+  const openSettings = () => {
+    setPendingSettings({
+      ...settings,
+      enabledCards: {
+        ...settings.enabledCards,
+        cpu: true
+      }
+    });
+    setIsSettingsOpen(true);
+  };
+
+  const closeSettings = () => {
+    setIsSettingsOpen(false);
+  };
+
+  const handleCardToggle = (cardId, checked) => {
+    if (cardId === 'cpu') {
+      return;
+    }
+
+    setPendingSettings(prev => {
+      const nextEnabled = {
+        ...prev.enabledCards,
+        cpu: true,
+        [cardId]: checked
+      };
+
+      let nextDefault = prev.defaultPerformanceTab;
+      if (!nextEnabled[nextDefault]) {
+        const fallback = PERFORMANCE_TABS.find(tab => nextEnabled[tab.id]);
+        nextDefault = fallback ? fallback.id : 'cpu';
+      }
+
+      return {
+        ...prev,
+        enabledCards: nextEnabled,
+        defaultPerformanceTab: nextDefault
+      };
+    });
+  };
+
+  const handleSettingsSubmit = (event) => {
+    event.preventDefault();
+
+    const normalizedInterval = Math.max(
+      MIN_UPDATE_INTERVAL,
+      Number(pendingSettings.updateInterval) || defaultSettings.updateInterval
+    );
+
+    const normalizedHistory = Math.min(
+      MAX_HISTORY_LENGTH,
+      Math.max(
+        MIN_HISTORY_LENGTH,
+        Math.round(Number(pendingSettings.historyLength) || defaultSettings.historyLength)
+      )
+    );
+
+    const enabledCards = {
+      ...defaultSettings.enabledCards,
+      ...(pendingSettings.enabledCards || {}),
+      cpu: true
+    };
+
+    const nextSettings = {
+      ...pendingSettings,
+      updateInterval: normalizedInterval,
+      historyLength: normalizedHistory,
+      enabledCards
+    };
+
+    const futureAvailableTabs = PERFORMANCE_TABS.filter(tab => {
+      if (!enabledCards[tab.id]) return false;
+      if (tab.requireGpu && gpuLoad.length === 0) return false;
+      return true;
+    });
+
+    if (!futureAvailableTabs.some(tab => tab.id === nextSettings.defaultPerformanceTab)) {
+      nextSettings.defaultPerformanceTab = futureAvailableTabs.length > 0 ? futureAvailableTabs[0].id : 'cpu';
+    }
+
+    setSettings(nextSettings);
+    setPerformanceTab(nextSettings.defaultPerformanceTab);
+    setIsSettingsOpen(false);
+  };
+
+  const renderSettingsModal = () => {
+    if (!isSettingsOpen) return null;
+
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+        <div className="w-full max-w-xl bg-gray-950 border border-green-500/40 rounded-lg shadow-2xl p-6 space-y-6">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-bold text-green-200">[SETTINGS_PANEL]</h2>
+            <button
+              onClick={closeSettings}
+              className="text-green-300 hover:text-green-100"
+              aria-label="Close settings"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <form onSubmit={handleSettingsSubmit} className="space-y-5 text-xs md:text-sm text-green-200">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <label className="space-y-2">
+                <span className="block uppercase tracking-wide text-green-300">更新頻率 (毫秒)</span>
+                <input
+                  type="number"
+                  min={MIN_UPDATE_INTERVAL}
+                  step={100}
+                  value={pendingSettings.updateInterval}
+                  onChange={(e) => setPendingSettings(prev => ({ ...prev, updateInterval: Number(e.target.value) }))}
+                  className="w-full bg-black border border-green-500/40 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-green-400"
+                />
+                <span className="text-[10px] text-green-400/80">最小 {MIN_UPDATE_INTERVAL} ms</span>
+              </label>
+
+              <label className="space-y-2">
+                <span className="block uppercase tracking-wide text-green-300">歷史長度 (取樣數)</span>
+                <input
+                  type="number"
+                  min={MIN_HISTORY_LENGTH}
+                  max={MAX_HISTORY_LENGTH}
+                  step={10}
+                  value={pendingSettings.historyLength}
+                  onChange={(e) => setPendingSettings(prev => ({ ...prev, historyLength: Number(e.target.value) }))}
+                  className="w-full bg-black border border-green-500/40 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-green-400"
+                />
+                <span className="text-[10px] text-green-400/80">{MIN_HISTORY_LENGTH}-{MAX_HISTORY_LENGTH} 取樣點</span>
+              </label>
+            </div>
+
+            <label className="space-y-2 block">
+              <span className="block uppercase tracking-wide text-green-300">預設 Performance 卡片</span>
+              <select
+                value={pendingSettings.defaultPerformanceTab}
+                onChange={(e) => setPendingSettings(prev => ({ ...prev, defaultPerformanceTab: e.target.value }))}
+                className="w-full bg-black border border-green-500/40 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-green-400"
+              >
+                {PERFORMANCE_TABS.map(tab => (
+                  <option
+                    key={tab.id}
+                    value={tab.id}
+                    disabled={pendingSettings.enabledCards?.[tab.id] === false}
+                  >
+                    {tab.label}{pendingSettings.enabledCards?.[tab.id] === false ? ' (關閉)' : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div className="space-y-2">
+              <span className="block uppercase tracking-wide text-green-300">顯示的卡片</span>
+              <div className="grid grid-cols-2 gap-2">
+                {PERFORMANCE_TABS.map(tab => (
+                  <label key={tab.id} className={`flex items-center space-x-2 bg-black/40 border border-green-500/30 rounded px-2 py-1 ${tab.id === 'cpu' ? 'opacity-80' : ''}`}>
+                    <input
+                      type="checkbox"
+                      checked={pendingSettings.enabledCards?.[tab.id] !== false}
+                      disabled={tab.id === 'cpu'}
+                      onChange={(e) => handleCardToggle(tab.id, e.target.checked)}
+                      className="accent-green-400"
+                    />
+                    <span>{tab.label}</span>
+                  </label>
+                ))}
+              </div>
+              <span className="text-[10px] text-green-400/80">CPU 卡片為必須顯示。</span>
+            </div>
+
+            <div className="flex justify-end space-x-2">
+              <button
+                type="button"
+                onClick={closeSettings}
+                className="px-3 py-1 border border-green-500/40 text-green-300 rounded hover:bg-green-500/10"
+              >
+                CANCEL
+              </button>
+              <button
+                type="submit"
+                className="px-3 py-1 border border-green-500 text-green-100 bg-green-500/30 rounded hover:bg-green-500/40"
+              >
+                SAVE
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
+  };
+
   const selectedProcess = useMemo(() => {
     if (!selectedPid) return null;
     return processes.find(proc => proc.pid === selectedPid) || null;
@@ -982,12 +1309,19 @@ const TaskManager = () => {
                 <div className="text-xs text-green-300">STATUS: ACTIVE | TIME: {currentTime.toLocaleTimeString()}</div>
               </div>
             </div>
-            <div className="flex space-x-2 md:space-x-4 text-xs">
-              <button onClick={() => setSelectedTab('processes')} className="px-2 md:px-3 py-1 border border-green-500 text-green-400 hover:bg-green-500/20 rounded">PROC</button>
-              <button onClick={() => setSelectedTab('performance')} className="px-2 md:px-3 py-1 bg-green-500/20 text-green-300 border border-green-400 rounded">PERF</button>
-            </div>
+          <div className="flex items-center space-x-2 md:space-x-3 text-xs">
+            <button onClick={() => setSelectedTab('processes')} className="px-2 md:px-3 py-1 border border-green-500 text-green-400 hover:bg-green-500/20 rounded">PROC</button>
+            <button onClick={() => setSelectedTab('performance')} className="px-2 md:px-3 py-1 bg-green-500/20 text-green-300 border border-green-400 rounded">PERF</button>
+            <button
+              onClick={openSettings}
+              className="px-2 md:px-3 py-1 border border-green-500/40 text-green-300 hover:bg-green-500/10 rounded flex items-center space-x-1"
+            >
+              <Settings className="w-3 h-3 md:w-4 md:h-4" />
+              <span className="hidden sm:inline">SET</span>
+            </button>
           </div>
         </div>
+      </div>
 
         <div className="p-4 md:p-6 space-y-4">
           <div className="flex flex-wrap gap-2 text-xs">
@@ -1005,9 +1339,10 @@ const TaskManager = () => {
 
           {renderPerformanceCard()}
         </div>
-      </div>
-    );
-  }
+        {renderSettingsModal()}
+    </div>
+  );
+}
   // 渲染處理程序頁面
   return (
     <div className="w-full max-w-7xl mx-auto bg-black text-green-400 rounded-lg shadow-2xl border border-green-500/30 font-mono">
@@ -1026,9 +1361,16 @@ const TaskManager = () => {
               <div className="text-xs text-green-300">STATUS: ACTIVE | TIME: {currentTime.toLocaleTimeString()}</div>
             </div>
           </div>
-          <div className="flex space-x-2 md:space-x-4 text-xs">
+          <div className="flex items-center space-x-2 md:space-x-3 text-xs">
             <button onClick={() => setSelectedTab('processes')} className="px-2 md:px-3 py-1 bg-green-500/20 text-green-300 border border-green-400 rounded">PROC</button>
             <button onClick={() => setSelectedTab('performance')} className="px-2 md:px-3 py-1 border border-green-500 text-green-400 hover:bg-green-500/20 rounded">PERF</button>
+            <button
+              onClick={openSettings}
+              className="px-2 md:px-3 py-1 border border-green-500/40 text-green-300 hover:bg-green-500/10 rounded flex items-center space-x-1"
+            >
+              <Settings className="w-3 h-3 md:w-4 md:h-4" />
+              <span className="hidden sm:inline">SET</span>
+            </button>
           </div>
         </div>
       </div>
@@ -1337,11 +1679,12 @@ const TaskManager = () => {
             {isMobile ? (
               `CPU:${systemStats.totalCpu.toFixed(0)}% GPU:${systemStats.gpuUsage.toFixed(0)}% PWR:${systemStats.totalPower.toFixed(0)}W BAT:${systemStats.batteryLevel.toFixed(0)}%`
             ) : (
-              `UPDATE: 2s | CPU: ${systemStats.totalCpu.toFixed(1)}% | GPU: ${systemStats.gpuUsage.toFixed(1)}% | PWR: ${systemStats.totalPower.toFixed(1)}W | BAT: ${systemStats.batteryLevel.toFixed(0)}% | TIME: ${currentTime.toLocaleTimeString()}`
+              `UPDATE: ${(updateInterval / 1000).toFixed(1)}s | CPU: ${systemStats.totalCpu.toFixed(1)}% | GPU: ${systemStats.gpuUsage.toFixed(1)}% | PWR: ${systemStats.totalPower.toFixed(1)}W | BAT: ${systemStats.batteryLevel.toFixed(0)}% | TIME: ${currentTime.toLocaleTimeString()}`
             )}
           </span>
         </div>
       </div>
+      {renderSettingsModal()}
     </div>
   );
 };
