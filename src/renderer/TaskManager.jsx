@@ -1,5 +1,9 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { Search, X, Terminal, Zap, Activity, AlertTriangle, Settings } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react'
+import { AlertTriangle } from 'lucide-react'
+import PerformanceView from './views/PerformanceView'
+import ProcessView from './views/ProcessView'
+import StatusBar from './components/StatusBar'
+import SettingsModal from './components/SettingsModal'
 
 const SETTINGS_STORAGE_KEY = 'htm-settings';
 const MIN_UPDATE_INTERVAL = 500;
@@ -514,6 +518,11 @@ const TaskManager = () => {
     return chars[Math.floor(Math.random() * chars.length)];
   };
 
+  const generateMatrixBlock = (rows, columns) =>
+    Array.from({ length: rows }, () =>
+      Array.from({ length: columns }, () => getMatrixChar()).join('')
+    ).join('\n');
+
   const formatThroughput = (mbps) => {
     if (!Number.isFinite(mbps) || mbps <= 0) return '0.0 MB/s';
     if (mbps >= 1) return `${mbps.toFixed(1)} MB/s`;
@@ -678,345 +687,6 @@ const TaskManager = () => {
   const gpuMemoryUsed = Number.isFinite(activeGpu?.memoryUsed) ? activeGpu.memoryUsed : 0;
   const gpuMemoryTotal = Number.isFinite(activeGpu?.memoryTotal) ? activeGpu.memoryTotal : 0;
   const gpuMemoryUsage = gpuMemoryTotal > 0 ? (gpuMemoryUsed / gpuMemoryTotal) * 100 : 0;
-  const performanceTabs = tabsForRender;
-
-  const renderPerformanceCard = () => {
-    switch (performanceTab) {
-      case 'gpu':
-        return (
-          <div className="space-y-4 border border-green-500/30 p-3 md:p-4 rounded bg-gray-900/50">
-            <div className="flex items-center justify-between">
-              <h3 className="text-base md:text-lg font-bold text-green-400 flex items-center space-x-2">
-                <Activity className="w-4 h-4 md:w-5 md:h-5 animate-pulse" />
-                <span className="text-sm md:text-base">[GPU] {systemStats.gpuModel}</span>
-              </h3>
-              {systemStats.gpuCount > 1 && (
-                <div className="flex space-x-1 text-[10px] md:text-xs">
-                  {gpuLoad.map((gpu, index) => (
-                    <button
-                      key={index}
-                      onClick={() => setSelectedGpuIndex(index)}
-                      className={`px-2 py-1 border rounded transition-colors ${index === selectedGpuIndex ? 'bg-green-500/30 border-green-400 text-green-200' : 'border-green-500/40 text-green-300 hover:bg-green-500/10'}`}
-                    >
-                      GPU_{index}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="bg-black/50 p-2 md:p-3 rounded border border-green-500/20">
-              <div className="grid grid-cols-2 gap-2 md:gap-4 text-xs">
-                <div>USAGE: <span className="text-green-300 font-bold">{systemStats.gpuUsage.toFixed(1)}%</span></div>
-                <div>POWER: <span className="text-green-300 font-bold">{systemStats.gpuPower.toFixed(1)}W</span></div>
-                <div>MEM: <span className="text-green-300 font-bold">{formatMemory(systemStats.gpuMemory)}{systemStats.gpuMemoryTotal > 0 ? ` / ${formatMemory(systemStats.gpuMemoryTotal)}` : ''}</span></div>
-                <div>TEMP: <span className="text-green-300 font-bold">{systemStats.gpuTemp}°C</span></div>
-              </div>
-              {systemStats.gpuMemoryTotal > 0 && (
-                <div className="mt-3">
-                  <div className="h-2 md:h-3 bg-gray-800 rounded-sm overflow-hidden border border-green-500/30">
-                    <div
-                      className="h-full bg-green-400 transition-all duration-300"
-                      style={{ width: `${Math.min(gpuMemoryUsage, 100)}%` }}
-                    ></div>
-                  </div>
-                  <div className="text-[10px] text-green-300 mt-1 text-right">
-                    VRAM: {gpuMemoryUsage.toFixed(1)}%
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div>
-              <h4 className="font-bold mb-2 md:mb-3 text-green-400 text-xs md:text-sm">[GPU_HISTORY]</h4>
-              <div className="h-6 md:h-8 bg-gray-800 rounded-sm flex items-end space-x-0.5 px-1 border border-green-500/30">
-                {activeGpuHistory.slice(isMobile ? -20 : -30).map((value, index) => (
-                  <div
-                    key={index}
-                    className="flex-1 bg-green-400 rounded-sm min-h-0.5"
-                    style={{ height: `${Math.min((value / gpuHistoryMax) * 100, 100)}%` }}
-                  ></div>
-                ))}
-              </div>
-              <div className="text-[10px] text-green-300 mt-1">
-                最近負載趨勢（取樣 {isMobile ? 20 : 30} 次）
-              </div>
-            </div>
-
-            {(!activeGpu || !Number.isFinite(activeGpu.utilizationGpu)) && (
-              <p className="text-[10px] text-green-300/80">
-                * GPU 利用率由系統回報。若無法取得，將顯示推估或保持 0。
-              </p>
-            )}
-          </div>
-        );
-
-      case 'network':
-        return (
-          <div className="space-y-4 border border-green-500/30 p-3 md:p-4 rounded bg-gray-900/50">
-            <h3 className="text-base md:text-lg font-bold text-green-400">[NETWORK] THROUGHPUT</h3>
-            <div className="bg-black/50 p-2 md:p-3 rounded border border-green-500/20">
-              <div className="grid grid-cols-2 gap-2 md:gap-4 text-xs">
-                <div>DOWN: <span className="text-green-300 font-bold">{formatThroughput(systemStats.networkDown)}</span></div>
-                <div>UP: <span className="text-green-300 font-bold">{formatThroughput(systemStats.networkUp)}</span></div>
-                <div>INTERFACES: <span className="text-green-300 font-bold">{networkStats.length}</span></div>
-                <div>TOP: <span className="text-green-300 font-bold">{systemStats.networkTop[0]?.name || 'N/A'}</span></div>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <div>
-                <div className="text-xs text-green-300 mb-1">DOWN</div>
-                <div className="h-6 md:h-8 bg-gray-800 rounded-sm flex items-end space-x-0.5 px-1 border border-green-500/30">
-                  {performanceHistory.netDown.slice(isMobile ? -20 : -30).map((value, index) => (
-                    <div
-                      key={index}
-                      className="flex-1 bg-blue-400 rounded-sm min-h-0.5"
-                      style={{ height: `${Math.min((value / netDownMax) * 100, 100)}%` }}
-                    ></div>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs text-green-300 mb-1">UP</div>
-                <div className="h-6 md:h-8 bg-gray-800 rounded-sm flex items-end space-x-0.5 px-1 border border-green-500/30">
-                  {performanceHistory.netUp.slice(isMobile ? -20 : -30).map((value, index) => (
-                    <div
-                      key={index}
-                      className="flex-1 bg-purple-400 rounded-sm min-h-0.5"
-                      style={{ height: `${Math.min((value / netUpMax) * 100, 100)}%` }}
-                    ></div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-1 text-xs">
-              <h4 className="font-bold text-green-400 text-xs md:text-sm">[TOP_INTERFACES]</h4>
-              {systemStats.networkTop.length > 0 ? (
-                systemStats.networkTop.map((iface, index) => (
-                  <div key={index} className="flex justify-between items-center bg-gray-900/60 border border-green-500/20 rounded px-2 py-1">
-                    <span className="text-green-200 truncate pr-2">{iface.name}</span>
-                    <span className="text-green-300 font-mono">{formatThroughput(iface.down)} / {formatThroughput(iface.up)}</span>
-                  </div>
-                ))
-              ) : (
-                <div className="text-green-300">No active interfaces</div>
-              )}
-            </div>
-          </div>
-        );
-
-      case 'storage':
-        return (
-          <div className="space-y-4 border border-green-500/30 p-3 md:p-4 rounded bg-gray-900/50">
-            <h3 className="text-base md:text-lg font-bold text-green-400">[STORAGE] PERFORMANCE</h3>
-            <div className="bg-black/50 p-2 md:p-3 rounded border border-green-500/20">
-              <div className="grid grid-cols-2 gap-2 md:gap-4 text-xs">
-                <div>READ: <span className="text-green-300 font-bold">{formatThroughput(systemStats.diskRead)}</span></div>
-                <div>WRITE: <span className="text-green-300 font-bold">{formatThroughput(systemStats.diskWrite)}</span></div>
-                <div>READ IOPS: <span className="text-green-300 font-bold">{formatIops(systemStats.diskReadIops)}</span></div>
-                <div>WRITE IOPS: <span className="text-green-300 font-bold">{formatIops(systemStats.diskWriteIops)}</span></div>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <div>
-                <div className="text-xs text-green-300 mb-1">READ</div>
-                <div className="h-6 md:h-8 bg-gray-800 rounded-sm flex items-end space-x-0.5 px-1 border border-green-500/30">
-                  {performanceHistory.diskRead.slice(isMobile ? -20 : -30).map((value, index) => (
-                    <div
-                      key={index}
-                      className="flex-1 bg-teal-400 rounded-sm min-h-0.5"
-                      style={{ height: `${Math.min((value / diskReadMax) * 100, 100)}%` }}
-                    ></div>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs text-green-300 mb-1">WRITE</div>
-                <div className="h-6 md:h-8 bg-gray-800 rounded-sm flex items-end space-x-0.5 px-1 border border-green-500/30">
-                  {performanceHistory.diskWrite.slice(isMobile ? -20 : -30).map((value, index) => (
-                    <div
-                      key={index}
-                      className="flex-1 bg-amber-400 rounded-sm min-h-0.5"
-                      style={{ height: `${Math.min((value / diskWriteMax) * 100, 100)}%` }}
-                    ></div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div>
-              <h4 className="font-bold mb-2 md:mb-3 text-green-400 text-xs md:text-sm">[VOLUME_USAGE]</h4>
-              <div className="space-y-1 text-xs">
-                {systemStats.storageVolumes.length > 0 ? (
-                  systemStats.storageVolumes.slice(0, 5).map((volume, index) => (
-                    <div key={index} className="bg-gray-900/60 border border-green-500/20 rounded px-2 py-2">
-                      <div className="flex justify-between text-green-200">
-                        <span className="truncate pr-2">{volume.name}</span>
-                        <span className="font-mono">{volume.usagePercent.toFixed(1)}%</span>
-                      </div>
-                      <div className="h-2 bg-gray-800 rounded-sm overflow-hidden border border-green-500/30 mt-1">
-                        <div
-                          className="h-full bg-green-400"
-                          style={{ width: `${Math.min(volume.usagePercent, 100)}%` }}
-                        ></div>
-                      </div>
-                      <div className="flex justify-between text-[10px] text-green-300 mt-1 font-mono">
-                        <span>USED: {formatStorage(volume.usedBytes)}</span>
-                        <span>FREE: {formatStorage(volume.availableBytes)}</span>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-green-300">No volume information</div>
-                )}
-              </div>
-              <p className="text-[10px] text-green-300/80 mt-2">
-                * 數據為系統層級總計，部分平台可能無法取得外接磁碟 I/O，僅顯示已知容量資訊。
-              </p>
-            </div>
-          </div>
-        );
-
-      case 'cpu':
-      default:
-        return (
-          <div className="space-y-4">
-            <div className="space-y-4 border border-green-500/30 p-3 md:p-4 rounded bg-gray-900/50">
-              <h3 className="text-base md:text-lg font-bold text-green-400 flex items-center space-x-2">
-                <Zap className="w-4 h-4 md:w-5 md:h-5 animate-pulse" />
-                <span className="text-sm md:text-base">[CPU_CORE] {systemInfo?.cpu?.manufacturer} {systemInfo?.cpu?.brand}</span>
-              </h3>
-              <div className="bg-black/50 p-2 md:p-3 rounded border border-green-500/20">
-                <div className="grid grid-cols-2 gap-2 md:gap-4 text-xs">
-                  <div>USAGE: <span className="text-green-300 font-bold">{systemStats.totalCpu.toFixed(1)}%</span></div>
-                  <div>USER/SYS: <span className="text-green-300 font-bold">{systemStats.cpuUser.toFixed(1)}% / {systemStats.cpuSystem.toFixed(1)}%</span></div>
-                  <div>CORES: <span className="text-green-300 font-bold">{systemInfo?.cpu?.cores || 'N/A'}</span></div>
-                  <div>THREADS: <span className="text-green-300 font-bold">{systemInfo?.cpu?.processors || 'N/A'}</span></div>
-                  <div>TEMP: <span className="text-green-300 font-bold">{systemStats.cpuTemp}°C</span></div>
-                  <div>UPTIME: <span className="text-green-300 font-bold">{formatUptime(systemInfo?.time?.uptime)}</span></div>
-                </div>
-              </div>
-
-              {cpuLoad && cpuLoad.cores && (
-                <div>
-                  <h4 className="font-bold mb-2 md:mb-3 text-green-400 text-xs md:text-sm">[CPU_CORES] LOAD</h4>
-                  <div className="space-y-1">
-                    {cpuLoad.cores.slice(0, isMobile ? 6 : cpuLoad.cores.length).map((core, index) => (
-                      <div key={index} className="flex items-center space-x-2">
-                        <span className="text-xs w-14 md:w-20 text-green-300">CORE_{index}</span>
-                        <div className="flex-1 h-2 md:h-3 bg-gray-800 rounded-sm overflow-hidden border border-green-500/30">
-                          <div
-                            className={`h-full transition-all duration-300 ${getCpuBarColor(core.load)} animate-pulse`}
-                            style={{ width: `${core.load}%` }}
-                          ></div>
-                        </div>
-                        <span className="text-xs w-8 md:w-12 text-green-300 font-bold">{core.load.toFixed(0)}%</span>
-                      </div>
-                    ))}
-                    {isMobile && cpuLoad.cores.length > 6 && (
-                      <div className="text-xs text-green-300 text-center">...+{cpuLoad.cores.length - 6} cores</div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-4 border border-green-500/30 p-3 md:p-4 rounded bg-gray-900/50">
-                <h3 className="text-base md:text-lg font-bold text-green-400">[MEMORY_STATUS]</h3>
-                <div className="bg-black/50 p-2 md:p-3 rounded border border-green-500/20">
-                  <div className="space-y-2 text-xs">
-                    <div className="flex justify-between">
-                      <span>USED:</span>
-                      <span className="text-green-300 font-bold">{formatMemory(systemStats.usedMemory)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>FREE:</span>
-                      <span className="text-green-300 font-bold">{formatMemory(systemStats.availableMemory)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>TOTAL:</span>
-                      <span className="text-green-300 font-bold">{formatMemory(systemStats.totalMemory)}</span>
-                    </div>
-                  </div>
-                  <div className="mt-3">
-                    <div className="h-3 md:h-4 bg-gray-800 rounded-sm overflow-hidden border border-green-500/30">
-                      <div
-                        className="h-full bg-green-400 transition-all duration-300 animate-pulse"
-                        style={{ width: `${(systemStats.usedMemory / systemStats.totalMemory) * 100}%` }}
-                      ></div>
-                    </div>
-                    <div className="text-xs text-green-300 mt-1 text-center">
-                      USAGE: {((systemStats.usedMemory / systemStats.totalMemory) * 100).toFixed(1)}%
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="space-y-4 border border-green-500/30 p-3 md:p-4 rounded bg-gray-900/50">
-                <h3 className="text-base md:text-lg font-bold text-green-400">[POWER_STATUS]</h3>
-                <div className="bg-black/50 p-2 md:p-3 rounded border border-green-500/20">
-                  <div className="space-y-2 text-xs">
-                    <div className="flex justify-between">
-                      <span>CPU_PWR:</span>
-                      <span className="text-green-300 font-bold">{systemStats.cpuPower.toFixed(1)}W</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>GPU_PWR:</span>
-                      <span className="text-green-300 font-bold">{systemStats.gpuPower.toFixed(1)}W</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>TOTAL:</span>
-                      <span className="text-green-300 font-bold">{systemStats.totalPower.toFixed(1)}W</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>BATTERY:</span>
-                      <span className={`font-bold ${systemStats.batteryLevel > 20 ? 'text-green-300' : 'text-red-400'}`}>
-                        {systemStats.batteryLevel.toFixed(0)}%
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <h4 className="font-bold mb-2 md:mb-3 text-green-400 text-xs md:text-sm">[PERF_HISTORY]</h4>
-                  <div className="space-y-2 md:space-y-3">
-                    <div>
-                      <div className="text-xs text-green-300 mb-1">CPU</div>
-                      <div className="h-6 md:h-8 bg-gray-800 rounded-sm flex items-end space-x-0.5 px-1 border border-green-500/30">
-                        {performanceHistory.cpu.slice(isMobile ? -20 : -30).map((value, index) => (
-                          <div
-                            key={index}
-                            className="flex-1 bg-green-400 rounded-sm min-h-0.5"
-                            style={{ height: `${(value / 100) * 100}%` }}
-                          ></div>
-                        ))}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-green-300 mb-1">MEM</div>
-                      <div className="h-6 md:h-8 bg-gray-800 rounded-sm flex items-end space-x-0.5 px-1 border border-green-500/30">
-                        {performanceHistory.memory.slice(isMobile ? -20 : -30).map((value, index) => (
-                          <div
-                            key={index}
-                            className="flex-1 bg-blue-400 rounded-sm min-h-0.5"
-                            style={{ height: `${(value / 100) * 100}%` }}
-                          ></div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-    }
-  };
-
   const openSettings = () => {
     setPendingSettings({
       ...settings,
@@ -1032,10 +702,15 @@ const TaskManager = () => {
     setIsSettingsOpen(false);
   };
 
+  const updatePendingField = (field, value) => {
+    setPendingSettings(prev => ({
+      ...prev,
+      [field]: value
+    }));
+  };
+
   const handleCardToggle = (cardId, checked) => {
-    if (cardId === 'cpu') {
-      return;
-    }
+    if (cardId === 'cpu') return;
 
     setPendingSettings(prev => {
       const nextEnabled = {
@@ -1102,112 +777,6 @@ const TaskManager = () => {
     setIsSettingsOpen(false);
   };
 
-  const renderSettingsModal = () => {
-    if (!isSettingsOpen) return null;
-
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-        <div className="w-full max-w-xl bg-gray-950 border border-green-500/40 rounded-lg shadow-2xl p-6 space-y-6">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-bold text-green-200">[SETTINGS_PANEL]</h2>
-            <button
-              onClick={closeSettings}
-              className="text-green-300 hover:text-green-100"
-              aria-label="Close settings"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-
-          <form onSubmit={handleSettingsSubmit} className="space-y-5 text-xs md:text-sm text-green-200">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <label className="space-y-2">
-                <span className="block uppercase tracking-wide text-green-300">更新頻率 (毫秒)</span>
-                <input
-                  type="number"
-                  min={MIN_UPDATE_INTERVAL}
-                  step={100}
-                  value={pendingSettings.updateInterval}
-                  onChange={(e) => setPendingSettings(prev => ({ ...prev, updateInterval: Number(e.target.value) }))}
-                  className="w-full bg-black border border-green-500/40 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-green-400"
-                />
-                <span className="text-[10px] text-green-400/80">最小 {MIN_UPDATE_INTERVAL} ms</span>
-              </label>
-
-              <label className="space-y-2">
-                <span className="block uppercase tracking-wide text-green-300">歷史長度 (取樣數)</span>
-                <input
-                  type="number"
-                  min={MIN_HISTORY_LENGTH}
-                  max={MAX_HISTORY_LENGTH}
-                  step={10}
-                  value={pendingSettings.historyLength}
-                  onChange={(e) => setPendingSettings(prev => ({ ...prev, historyLength: Number(e.target.value) }))}
-                  className="w-full bg-black border border-green-500/40 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-green-400"
-                />
-                <span className="text-[10px] text-green-400/80">{MIN_HISTORY_LENGTH}-{MAX_HISTORY_LENGTH} 取樣點</span>
-              </label>
-            </div>
-
-            <label className="space-y-2 block">
-              <span className="block uppercase tracking-wide text-green-300">預設 Performance 卡片</span>
-              <select
-                value={pendingSettings.defaultPerformanceTab}
-                onChange={(e) => setPendingSettings(prev => ({ ...prev, defaultPerformanceTab: e.target.value }))}
-                className="w-full bg-black border border-green-500/40 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-green-400"
-              >
-                {PERFORMANCE_TABS.map(tab => (
-                  <option
-                    key={tab.id}
-                    value={tab.id}
-                    disabled={pendingSettings.enabledCards?.[tab.id] === false}
-                  >
-                    {tab.label}{pendingSettings.enabledCards?.[tab.id] === false ? ' (關閉)' : ''}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <div className="space-y-2">
-              <span className="block uppercase tracking-wide text-green-300">顯示的卡片</span>
-              <div className="grid grid-cols-2 gap-2">
-                {PERFORMANCE_TABS.map(tab => (
-                  <label key={tab.id} className={`flex items-center space-x-2 bg-black/40 border border-green-500/30 rounded px-2 py-1 ${tab.id === 'cpu' ? 'opacity-80' : ''}`}>
-                    <input
-                      type="checkbox"
-                      checked={pendingSettings.enabledCards?.[tab.id] !== false}
-                      disabled={tab.id === 'cpu'}
-                      onChange={(e) => handleCardToggle(tab.id, e.target.checked)}
-                      className="accent-green-400"
-                    />
-                    <span>{tab.label}</span>
-                  </label>
-                ))}
-              </div>
-              <span className="text-[10px] text-green-400/80">CPU 卡片為必須顯示。</span>
-            </div>
-
-            <div className="flex justify-end space-x-2">
-              <button
-                type="button"
-                onClick={closeSettings}
-                className="px-3 py-1 border border-green-500/40 text-green-300 rounded hover:bg-green-500/10"
-              >
-                CANCEL
-              </button>
-              <button
-                type="submit"
-                className="px-3 py-1 border border-green-500 text-green-100 bg-green-500/30 rounded hover:bg-green-500/40"
-              >
-                SAVE
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-    );
-  };
-
   const selectedProcess = useMemo(() => {
     if (!selectedPid) return null;
     return processes.find(proc => proc.pid === selectedPid) || null;
@@ -1227,6 +796,27 @@ const TaskManager = () => {
       alert('無法複製到剪貼簿');
     }
   };
+
+  const helperFns = { formatThroughput, formatIops, formatMemory, formatStorage, getCpuBarColor };
+  const processHelpers = { formatMemory, formatNumber, formatUptime, getCpuBarColor, handleCopy };
+
+  const performanceMatrixText = useMemo(() => generateMatrixBlock(20, 100), [performanceTab]);
+  const processMatrixText = useMemo(() => generateMatrixBlock(8, 120), [filteredProcesses.length, selectedPid]);
+
+  const settingsElement = (
+    <SettingsModal
+      isOpen={isSettingsOpen}
+      pendingSettings={pendingSettings}
+      onClose={closeSettings}
+      onSubmit={handleSettingsSubmit}
+      onUpdateField={updatePendingField}
+      onCardToggle={handleCardToggle}
+      tabs={PERFORMANCE_TABS}
+      minUpdateInterval={MIN_UPDATE_INTERVAL}
+      minHistory={MIN_HISTORY_LENGTH}
+      maxHistory={MAX_HISTORY_LENGTH}
+    />
+  );
 
   // 如果不在Electron環境中，顯示警告
   if (!isElectron) {
@@ -1290,402 +880,88 @@ const TaskManager = () => {
   };
 
   systemStats.totalPower = systemStats.cpuPower + systemStats.gpuPower + 5;
+
+  const performancePanelData = {
+    cpu: { systemInfo, systemStats, cpuLoad, performanceHistory },
+    gpu: {
+      systemStats,
+      gpuLoad,
+      selectedGpuIndex,
+      onSelectGpu: setSelectedGpuIndex,
+      activeGpuHistory,
+      gpuHistoryMax,
+      gpuMemoryUsage
+    },
+    network: {
+      systemStats,
+      performanceHistory,
+      netDownMax,
+      netUpMax,
+      interfacesCount: networkStats.length
+    },
+    storage: {
+      systemStats,
+      performanceHistory,
+      diskReadMax,
+      diskWriteMax
+    }
+  };
+
+  const performancePanelProps = {
+    tabs: tabsForRender,
+    activeTab: performanceTab,
+    onTabChange: setPerformanceTab,
+    isMobile,
+    data: performancePanelData,
+    helpers: helperFns
+  };
+
   // 渲染效能頁面
   if (selectedTab === 'performance') {
     return (
-      <div className="w-full max-w-7xl mx-auto bg-black text-green-400 rounded-lg shadow-2xl border border-green-500/30 font-mono">
-        {/* Header */}
-        <div className="bg-gray-900 p-3 md:p-4 border-b border-green-500/30 relative overflow-hidden">
-          <div className="absolute inset-0 opacity-10">
-            <div className="text-green-300 text-xs leading-3 whitespace-pre-wrap">
-              {Array.from({length: 20}, () => Array.from({length: 100}, () => getMatrixChar()).join('')).join('\n')}
-            </div>
-          </div>
-          <div className="relative flex flex-col md:flex-row justify-between md:items-center space-y-2 md:space-y-0">
-            <div className="flex items-center space-x-2 md:space-x-3">
-              <Terminal className="w-5 h-5 md:w-6 md:h-6 text-green-400 animate-pulse" />
-              <div>
-                <h1 className="text-base md:text-lg font-bold text-green-400">[SYSTEM_MONITOR.EXE]</h1>
-                <div className="text-xs text-green-300">STATUS: ACTIVE | TIME: {currentTime.toLocaleTimeString()}</div>
-              </div>
-            </div>
-          <div className="flex items-center space-x-2 md:space-x-3 text-xs">
-            <button onClick={() => setSelectedTab('processes')} className="px-2 md:px-3 py-1 border border-green-500 text-green-400 hover:bg-green-500/20 rounded">PROC</button>
-            <button onClick={() => setSelectedTab('performance')} className="px-2 md:px-3 py-1 bg-green-500/20 text-green-300 border border-green-400 rounded">PERF</button>
-            <button
-              onClick={openSettings}
-              className="px-2 md:px-3 py-1 border border-green-500/40 text-green-300 hover:bg-green-500/10 rounded flex items-center space-x-1"
-            >
-              <Settings className="w-3 h-3 md:w-4 md:h-4" />
-              <span className="hidden sm:inline">SET</span>
-            </button>
-          </div>
-        </div>
-      </div>
+      <>
+        <PerformanceView
+          matrixText={performanceMatrixText}
+          currentTime={currentTime}
+          onNavigateProcesses={() => setSelectedTab('processes')}
+          onOpenSettings={openSettings}
+          panelProps={performancePanelProps}
+        />
+        {settingsElement}
+      </>
+    );
+  }
 
-        <div className="p-4 md:p-6 space-y-4">
-          <div className="flex flex-wrap gap-2 text-xs">
-            {performanceTabs.map(tab => (
-              <button
-                key={tab.id}
-                disabled={tab.disabled}
-                onClick={() => !tab.disabled && setPerformanceTab(tab.id)}
-                className={`px-3 py-1 rounded border transition-colors ${performanceTab === tab.id ? 'bg-green-500/30 border-green-400 text-green-100' : tab.disabled ? 'border-green-500/10 text-green-500/40 cursor-not-allowed' : 'border-green-500/30 text-green-300 hover:bg-green-500/10'}`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
-          {renderPerformanceCard()}
-        </div>
-        {renderSettingsModal()}
-    </div>
-  );
-}
-  // 渲染處理程序頁面
   return (
-    <div className="w-full max-w-7xl mx-auto bg-black text-green-400 rounded-lg shadow-2xl border border-green-500/30 font-mono">
-      {/* Header */}
-      <div className="bg-gray-900 p-3 md:p-4 border-b border-green-500/30 relative overflow-hidden">
-        <div className="absolute inset-0 opacity-10">
-          <div className="text-green-300 text-xs leading-3 whitespace-pre-wrap">
-            {Array.from({length: 8}, () => Array.from({length: 120}, () => getMatrixChar()).join('')).join('\n')}
-          </div>
-        </div>
-        <div className="relative flex flex-col md:flex-row justify-between md:items-center space-y-2 md:space-y-0">
-          <div className="flex items-center space-x-2 md:space-x-3">
-            <Terminal className="w-5 h-5 md:w-6 md:h-6 text-green-400 animate-pulse" />
-            <div>
-              <h1 className="text-base md:text-lg font-bold text-green-400">[PROCESS_MONITOR.EXE]</h1>
-              <div className="text-xs text-green-300">STATUS: ACTIVE | TIME: {currentTime.toLocaleTimeString()}</div>
-            </div>
-          </div>
-          <div className="flex items-center space-x-2 md:space-x-3 text-xs">
-            <button onClick={() => setSelectedTab('processes')} className="px-2 md:px-3 py-1 bg-green-500/20 text-green-300 border border-green-400 rounded">PROC</button>
-            <button onClick={() => setSelectedTab('performance')} className="px-2 md:px-3 py-1 border border-green-500 text-green-400 hover:bg-green-500/20 rounded">PERF</button>
-            <button
-              onClick={openSettings}
-              className="px-2 md:px-3 py-1 border border-green-500/40 text-green-300 hover:bg-green-500/10 rounded flex items-center space-x-1"
-            >
-              <Settings className="w-3 h-3 md:w-4 md:h-4" />
-              <span className="hidden sm:inline">SET</span>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* 系統統計 */}
-      <div className="p-3 md:p-4 bg-gray-900/50 border-b border-green-500/30">
-        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-2 md:gap-4 text-xs">
-          <div className="text-center">
-            <div className="text-green-300">PROCESSES</div>
-            <div className="font-bold text-sm md:text-lg text-green-400">{systemStats.processes}</div>
-          </div>
-          <div className="text-center">
-            <div className="text-green-300">CPU_USAGE</div>
-            <div className="font-bold text-sm md:text-lg text-green-400">{systemStats.totalCpu.toFixed(1)}%</div>
-          </div>
-          <div className="text-center">
-            <div className="text-green-300">GPU_USAGE</div>
-            <div className="font-bold text-sm md:text-lg text-green-400">{systemStats.gpuUsage.toFixed(1)}%</div>
-          </div>
-          <div className="text-center">
-            <div className="text-green-300">MEMORY</div>
-            <div className="font-bold text-sm md:text-lg text-green-400">{formatMemory(systemStats.usedMemory)}</div>
-          </div>
-          <div className="text-center">
-            <div className="text-green-300">POWER</div>
-            <div className="font-bold text-sm md:text-lg text-green-400">{systemStats.totalPower.toFixed(1)}W</div>
-          </div>
-          <div className="text-center">
-            <div className="text-green-300">BATTERY</div>
-            <div className={`font-bold text-sm md:text-lg ${systemStats.batteryLevel > 20 ? 'text-green-400' : 'text-red-400'}`}>
-              {systemStats.batteryLevel.toFixed(0)}%
-            </div>
-          </div>
-          <div className="text-center">
-            <div className="text-green-300">THREADS</div>
-            <div className="font-bold text-sm md:text-lg text-green-400">{formatNumber(systemStats.threads)}</div>
-          </div>
-          <div className="text-center">
-            <div className="text-green-300">UPTIME</div>
-            <div className="font-bold text-sm md:text-lg text-green-400">{systemStats.uptime}</div>
-          </div>
-        </div>
-      </div>
-
-      {/* 搜尋列 */}
-      <div className="p-3 md:p-4 border-b border-green-500/30 bg-gray-900/30">
-        <div className="relative w-full md:max-w-md">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-green-400" />
-          <input
-            type="text"
-            placeholder="> SEARCH_PROCESS_OR_PID..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 bg-black border border-green-500/50 rounded text-green-400 placeholder-green-600 focus:ring-2 focus:ring-green-400 focus:border-green-400 text-sm"
-          />
-        </div>
-      </div>
-      {/* 處理程序表格標題 */}
-      <div className="bg-gray-900/50 px-3 md:px-4 py-3 border-b border-green-500/30">
-        <div className="hidden md:grid grid-cols-12 gap-4 text-xs font-bold text-green-300">
-          <button onClick={() => handleSort('name')} className="col-span-3 text-left hover:text-green-400 transition-colors">
-            [PROCESS_NAME] {sortBy === 'name' && (sortOrder === 'asc' ? '↑' : '↓')}
-          </button>
-          <button onClick={() => handleSort('pid')} className="col-span-1 text-center hover:text-green-400 transition-colors">
-            [PID] {sortBy === 'pid' && (sortOrder === 'asc' ? '↑' : '↓')}
-          </button>
-          <div className="col-span-1 text-center">[STATUS]</div>
-          <div className="col-span-1 text-center">[USER]</div>
-          <button onClick={() => handleSort('cpu')} className="col-span-1 text-right hover:text-green-400 transition-colors">
-            [CPU%] {sortBy === 'cpu' && (sortOrder === 'asc' ? '↑' : '↓')}
-          </button>
-          <button onClick={() => handleSort('memory')} className="col-span-2 text-right hover:text-green-400 transition-colors">
-            [MEMORY] {sortBy === 'memory' && (sortOrder === 'asc' ? '↑' : '↓')}
-          </button>
-          <button onClick={() => handleSort('threads')} className="col-span-1 text-right hover:text-green-400 transition-colors">
-            [THREADS] {sortBy === 'threads' && (sortOrder === 'asc' ? '↑' : '↓')}
-          </button>
-          <div className="col-span-1 text-center">[ACTION]</div>
-        </div>
-        
-        {/* Mobile header */}
-        <div className="md:hidden flex justify-between text-xs font-bold text-green-300">
-          <button onClick={() => handleSort('name')} className="text-left hover:text-green-400">
-            [PROCESS] {sortBy === 'name' && (sortOrder === 'asc' ? '↑' : '↓')}
-          </button>
-          <button onClick={() => handleSort('cpu')} className="text-right hover:text-green-400">
-            [CPU%] {sortBy === 'cpu' && (sortOrder === 'asc' ? '↑' : '↓')}
-          </button>
-          <button onClick={() => handleSort('memory')} className="text-right hover:text-green-400">
-            [MEM] {sortBy === 'memory' && (sortOrder === 'asc' ? '↑' : '↓')}
-          </button>
-          <div>[ACTION]</div>
-        </div>
-      </div>
-
-      {/* 處理程序列表 */}
-      <div className="overflow-y-auto max-h-96 bg-black">
-        {filteredProcesses.map((process, index) => (
-          <div
-            key={process.id}
-            className={`px-3 md:px-4 py-2 text-xs border-b border-green-500/20 transition-colors cursor-pointer ${index % 2 === 0 ? 'bg-gray-900/20' : 'bg-black'} ${selectedPid === process.pid ? 'bg-green-500/10 ring-1 ring-green-500/60' : 'hover:bg-green-500/10'}`}
-            onClick={() => setSelectedPid(process.pid)}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault();
-                setSelectedPid(process.pid);
-              }
-            }}
-          >
-            {/* Desktop layout */}
-            <div className="hidden md:grid grid-cols-12 gap-4">
-              <div className="col-span-3 font-medium truncate text-green-400">{process.name}</div>
-              <div className="col-span-1 text-center font-mono text-green-300">{process.pid}</div>
-              <div className="col-span-1 text-center">
-                <span className={`px-2 py-1 rounded text-xs border ${process.status === 'Running' ? 'bg-green-500/20 text-green-400 border-green-500' : 'bg-red-500/20 text-red-400 border-red-500'} animate-pulse`}>
-                  {process.status.toUpperCase()}
-                </span>
-              </div>
-              <div className="col-span-1 text-center text-green-300">{process.user}</div>
-              <div className="col-span-1 text-right">
-                <span className={`font-mono font-bold ${process.cpu > 20 ? 'text-red-400' : process.cpu > 10 ? 'text-yellow-400' : 'text-green-400'}`}>
-                  {process.cpu.toFixed(1)}
-                </span>
-              </div>
-              <div className="col-span-2 text-right font-mono text-green-400">{formatMemory(process.memory)}</div>
-              <div className="col-span-1 text-right font-mono text-green-300">{process.threads}</div>
-              <div className="col-span-1 text-center">
-                <button
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    handleKillProcess(process.pid);
-                  }}
-                  className="w-6 h-6 rounded border border-red-500 hover:bg-red-500/20 flex items-center justify-center text-red-400 hover:text-red-300 transition-colors"
-                  title="TERMINATE"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              </div>
-            </div>
-            
-            {/* Mobile layout */}
-            <div className="md:hidden">
-              <div className="flex justify-between items-start mb-1">
-                <div className="font-medium text-green-400 text-sm truncate flex-1 mr-2">{process.name}</div>
-                <button
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    handleKillProcess(process.pid);
-                  }}
-                  className="w-5 h-5 rounded border border-red-500 hover:bg-red-500/20 flex items-center justify-center text-red-400 hover:text-red-300 transition-colors ml-2"
-                  title="TERMINATE"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              </div>
-              <div className="flex justify-between items-center text-xs">
-                <div className="flex space-x-4">
-                  <span className="text-green-300">PID: {process.pid}</span>
-                  <span className={`${process.cpu > 20 ? 'text-red-400' : process.cpu > 10 ? 'text-yellow-400' : 'text-green-400'} font-bold`}>
-                    CPU: {process.cpu.toFixed(1)}%
-                  </span>
-                  <span className="text-green-300">MEM: {formatMemory(process.memory)}</span>
-                </div>
-                <span className={`px-2 py-0.5 rounded text-xs border ${process.status === 'Running' ? 'bg-green-500/20 text-green-400 border-green-500' : 'bg-red-500/20 text-red-400 border-red-500'}`}>
-                  {process.status.toUpperCase()}
-                </span>
-              </div>
-            </div>
-      </div>
-    ))}
-  </div>
-
-      {/* 進程詳情面板 */}
-      {selectedProcess && (
-        <div className="px-3 md:px-4 py-4 border-t border-green-500/30 bg-gray-900/40">
-          <div className="bg-black/80 border border-green-500/40 rounded-lg p-4 md:p-5 shadow-xl">
-            <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
-              <div>
-                <div className="text-green-400 text-xs font-bold tracking-widest">[PROCESS_DETAIL]</div>
-                <h3 className="text-lg md:text-xl font-bold text-green-200">{selectedProcess.name}</h3>
-                <div className="text-green-300 text-xs font-mono">PID: {selectedProcess.pid}</div>
-              </div>
-              <button
-                onClick={() => setSelectedPid(null)}
-                className="self-start md:self-center px-2 py-1 border border-green-500/60 text-green-300 rounded hover:bg-green-500/20 transition-colors text-xs"
-              >
-                CLOSE
-              </button>
-            </div>
-
-            <div className="mt-3 flex flex-wrap gap-2 text-xs">
-              <button
-                onClick={() => handleKillProcess(selectedProcess.pid)}
-                className="px-3 py-1 rounded border border-red-500 text-red-400 hover:bg-red-500/20 transition-colors"
-              >
-                TERMINATE
-              </button>
-              <button
-                onClick={() => handleKillProcess(selectedProcess.pid, 'SIGKILL')}
-                className="px-3 py-1 rounded border border-red-500 text-red-300 hover:bg-red-500/30 transition-colors"
-              >
-                FORCE KILL
-              </button>
-              <button
-                onClick={() => handleCopy('PID', String(selectedProcess.pid))}
-                className="px-3 py-1 rounded border border-green-500 text-green-300 hover:bg-green-500/20 transition-colors"
-              >
-                COPY PID
-              </button>
-              <button
-                onClick={() => handleCopy('COMMAND', selectedProcess.command || selectedProcess.name)}
-                className="px-3 py-1 rounded border border-green-500 text-green-300 hover:bg-green-500/20 transition-colors"
-              >
-                COPY CMD
-              </button>
-              {selectedProcess.path && (
-                <button
-                  onClick={() => handleCopy('PATH', selectedProcess.path)}
-                  className="px-3 py-1 rounded border border-green-500 text-green-300 hover:bg-green-500/20 transition-colors"
-                >
-                  COPY PATH
-                </button>
-              )}
-            </div>
-
-            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs text-green-200">
-              <div className="bg-gray-900/60 border border-green-500/20 rounded p-3">
-                <div className="text-green-500/80 text-[10px] tracking-widest">STATUS</div>
-                <div className="font-bold">{selectedProcess.status}</div>
-              </div>
-              <div className="bg-gray-900/60 border border-green-500/20 rounded p-3">
-                <div className="text-green-500/80 text-[10px] tracking-widest">USER</div>
-                <div className="font-bold">{selectedProcess.user}</div>
-              </div>
-              <div className="bg-gray-900/60 border border-green-500/20 rounded p-3">
-                <div className="text-green-500/80 text-[10px] tracking-widest">CPU%</div>
-                <div className="font-mono font-bold">{selectedProcess.cpu.toFixed(2)}%</div>
-              </div>
-              <div className="bg-gray-900/60 border border-green-500/20 rounded p-3">
-                <div className="text-green-500/80 text-[10px] tracking-widest">MEM USAGE</div>
-                <div className="font-mono font-bold">
-                  {formatMemory(selectedProcess.memory)} (
-                  {Number.isFinite(selectedProcess.memoryRaw) ? selectedProcess.memoryRaw.toFixed(2) : '0.00'}%
-                  )
-                </div>
-              </div>
-              <div className="bg-gray-900/60 border border-green-500/20 rounded p-3">
-                <div className="text-green-500/80 text-[10px] tracking-widest">THREADS</div>
-                <div className="font-mono font-bold">{selectedProcess.threads}</div>
-              </div>
-              <div className="bg-gray-900/60 border border-green-500/20 rounded p-3">
-                <div className="text-green-500/80 text-[10px] tracking-widest">HANDLES</div>
-                <div className="font-mono font-bold">{selectedProcess.handles}</div>
-              </div>
-              <div className="bg-gray-900/60 border border-green-500/20 rounded p-3">
-                <div className="text-green-500/80 text-[10px] tracking-widest">PARENT PID</div>
-                <div className="font-mono font-bold">{selectedProcess.parentPid ?? 'N/A'}</div>
-              </div>
-              <div className="bg-gray-900/60 border border-green-500/20 rounded p-3">
-                <div className="text-green-500/80 text-[10px] tracking-widest">PRIORITY</div>
-                <div className="font-mono font-bold">{selectedProcess.priority ?? 'N/A'}</div>
-              </div>
-              <div className="bg-gray-900/60 border border-green-500/20 rounded p-3">
-                <div className="text-green-500/80 text-[10px] tracking-widest">STARTED</div>
-                <div className="font-mono font-bold break-all">{selectedProcess.started || 'Unknown'}</div>
-              </div>
-            </div>
-
-            <div className="mt-4 space-y-2 text-xs text-green-200">
-              {selectedProcess.command && (
-                <div>
-                  <div className="text-green-500/80 text-[10px] tracking-widest">COMMAND</div>
-                  <div className="bg-gray-900/60 border border-green-500/20 rounded p-2 font-mono break-all text-[11px]">
-                    {selectedProcess.command}
-                  </div>
-                </div>
-              )}
-              {selectedProcess.params && (
-                <div>
-                  <div className="text-green-500/80 text-[10px] tracking-widest">ARGS</div>
-                  <div className="bg-gray-900/60 border border-green-500/20 rounded p-2 font-mono break-all text-[11px]">
-                    {selectedProcess.params}
-                  </div>
-                </div>
-              )}
-              {selectedProcess.path && (
-                <div>
-                  <div className="text-green-500/80 text-[10px] tracking-widest">PATH</div>
-                  <div className="bg-gray-900/60 border border-green-500/20 rounded p-2 font-mono break-all text-[11px]">
-                    {selectedProcess.path}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 狀態列 */}
-      <div className="bg-gray-900 px-3 md:px-4 py-2 border-t border-green-500/30 text-xs text-green-300">
-        <div className="flex flex-col md:flex-row justify-between space-y-1 md:space-y-0">
-          <span>DISPLAY: {filteredProcesses.length}/{processes.length} PROC</span>
-          <span className="animate-pulse">
-            {isMobile ? (
-              `CPU:${systemStats.totalCpu.toFixed(0)}% GPU:${systemStats.gpuUsage.toFixed(0)}% PWR:${systemStats.totalPower.toFixed(0)}W BAT:${systemStats.batteryLevel.toFixed(0)}%`
-            ) : (
-              `UPDATE: ${(updateInterval / 1000).toFixed(1)}s | CPU: ${systemStats.totalCpu.toFixed(1)}% | GPU: ${systemStats.gpuUsage.toFixed(1)}% | PWR: ${systemStats.totalPower.toFixed(1)}W | BAT: ${systemStats.batteryLevel.toFixed(0)}% | TIME: ${currentTime.toLocaleTimeString()}`
-            )}
-          </span>
-        </div>
-      </div>
-      {renderSettingsModal()}
-    </div>
+    <>
+      <ProcessView
+        matrixText={processMatrixText}
+        currentTime={currentTime}
+        systemStats={systemStats}
+        isMobile={isMobile}
+        searchTerm={searchTerm}
+        onSearchChange={setSearchTerm}
+        sortBy={sortBy}
+        sortOrder={sortOrder}
+        onSort={handleSort}
+        filteredProcesses={filteredProcesses}
+        selectedProcess={selectedProcess}
+        onSelectProcess={setSelectedPid}
+        onKillProcess={handleKillProcess}
+        onOpenSettings={openSettings}
+        onNavigatePerformance={() => setSelectedTab('performance')}
+        helpers={processHelpers}
+      />
+      <StatusBar
+        isMobile={isMobile}
+        systemStats={systemStats}
+        updateInterval={updateInterval}
+        currentTime={currentTime}
+        filteredCount={filteredProcesses.length}
+        totalCount={processes.length}
+      />
+      {settingsElement}
+    </>
   );
 };
 
