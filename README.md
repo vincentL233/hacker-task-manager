@@ -7,9 +7,10 @@ Hacker Task Manager 是一個以 Electron + React + Vite 打造的桌面系統�
 - **即時系統監控**：顯示 CPU/GPU 使用率、溫度、功耗、歷史曲線與電池狀態。
 - **進程總覽**：以表格呈現程序名稱、PID、狀態、使用者、CPU/記憶體佔用與執行緒數，可搜尋與排序。
 - **進程詳情面板**：點擊任一進程即可查看指令、路徑、參數、父 PID、優先權等詳盡資訊，並提供終止與強制終止快捷鍵。
-- **網路 / 磁碟卡片**：即時顯示上行、下行、磁碟讀寫吞吐量與 IOPS，並附迷你歷史圖、熱門介面與實際掛載卷宗的容量概覽（macOS 會自動濾除 APFS 內部分割，僅顯示可見卷宗）。
+- **網路 / 磁碟 / GPU 卡片**：即時顯示上行、下行、磁碟讀寫吞吐量與 IOPS，並附迷你歷史圖、熱門介面與實際掛載卷宗的容量概覽（macOS 會自動濾除 APFS 內部分割，僅顯示可見卷宗）。
 - **GPU 觀測**：支援多 GPU 切換、利用率歷史圖與 VRAM 使用率條，即使在 macOS 的整合 GPU 上也能顯示主要資訊。
 - **設定面板**：可調整資料更新頻率、歷史點數、預設 Performance 卡片與顯示的卡片類型，偏好會儲存在本機。
+- **模組化架構**：`TaskManager` 專注於狀態管理與設定，Performance／Process 視圖與共用元件拆分在 `views/`、`components/`、`hooks/`，維護與擴充更容易。
 
 - **Electron 整合**：透過 `preload.js` 安全地把系統資訊、進程控制等 IPC API 暴露給前端。
 - **行動裝置友好視圖**：UI 會依視窗寬度切換為精簡表格，保留核心資訊。
@@ -47,7 +48,11 @@ Hacker Task Manager 是一個以 Electron + React + Vite 打造的桌面系統�
 │   │   └── preload.js  # 透過 contextBridge 暴露 electronAPI/windowAPI
 │   └── renderer        # React + Tailwind 前端
 │       ├── App.jsx     # 根組件，匯入 TaskManager
-│       ├── TaskManager.jsx # 核心 UI 與資料邏輯
+│       ├── TaskManager.jsx # 統籌狀態/設定並調度下方模組
+│       ├── components     # 可重用 UI 元件（PerformancePanel、SettingsModal、StatusBar…）
+│       ├── views          # 頂層畫面（PerformanceView、ProcessView 等）
+│       ├── hooks          # 自訂 hook（例如 useSystemMonitor）
+│       ├── utils          # 共用工具（歷史資料處理等）
 │       └── main.jsx    # React DOM 入口
 ├── public              # 靜態資源與 index.html
 ├── vite.config.js      # Vite 設定
@@ -75,6 +80,7 @@ Hacker Task Manager 是一個以 Electron + React + Vite 打造的桌面系統�
   - `get-gpu-load`：取得 GPU 利用率、記憶體、溫度（平台若無資料則以隨機值補洞）。
   - `get-io-stats`：整合網路介面速率、磁碟 IOPS、`fsSize`；前端會優先顯示可見掛載點與實測到的吞吐量。
   - `kill-process`：傳入 PID 與 signal (`SIGTERM` / `SIGKILL`) 終止進程。
+- React 渲染端透過 `useSystemMonitor` hook 集中抓取/整併資料，再交由 `PerformanceView`、`ProcessView` 等模組化元件呈現。
 - Tailwind CSS 提供樣式，`index.css` 中已引入必要的基礎設定。
 - 若在瀏覽器模式（沒有 `window.electronAPI`）將顯示警告 UI，提醒使用者以桌面模式執行。
 
